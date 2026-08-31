@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.0.2...create-agent-stack-v1.1.0) (2026-08-31)
+
+
+### Features
+
+* add interactive feature selection ([8c60191](https://github.com/TiagoJacinto/agent-stack/commit/8c601916b3f630f9b33a0e6025cb511a3ae36999))
+
 ## [1.0.2](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.0.1...create-agent-stack-v1.0.2) (2026-08-31)
 
 
