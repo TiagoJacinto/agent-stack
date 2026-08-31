@@ -14,9 +14,13 @@ export interface GeneratedProject {
   readonly files: readonly string[];
 }
 
+export async function ensureTargetDirectoryIsEmpty(targetDirectory: string): Promise<void> {
+  await assertTargetIsEmpty(resolve(targetDirectory));
+}
+
 export async function generateProject(options: GenerateProjectOptions): Promise<GeneratedProject> {
   const directory = resolve(options.targetDirectory);
-  await assertTargetIsEmpty(directory);
+  await ensureTargetDirectoryIsEmpty(directory);
 
   const projectName = normalizePackageName(basename(directory));
   const files = projectFiles(projectName, options.selection);
@@ -37,7 +41,7 @@ async function assertTargetIsEmpty(directory: string): Promise<void> {
   try {
     const entries = await readdir(directory);
     if (entries.length > 0) {
-      throw new Error(`Target directory is not empty: ${directory}`);
+      throw new Error(`Target directory is not empty:\n${directory}`);
     }
   } catch (error) {
     if (isMissingDirectory(error)) {

@@ -37,3 +37,9 @@ Feature: Create an agent stack project
     And unselected optional features are absent
     And the generated project records requested and resolved features without a preset
     And installing dependencies and running the custom project checks succeeds
+
+  Scenario: Reject a non-empty target before feature selection
+    Given a workspace containing an existing "existing-project" directory
+    When I start creating "existing-project" without a preset
+    Then the command fails before asking any feature questions
+    And the error names the target directory on the next line

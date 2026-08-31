@@ -3,7 +3,7 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
-import { generateProject } from "./generator.js";
+import { ensureTargetDirectoryIsEmpty, generateProject } from "./generator.js";
 import {
   createFeatureSelection,
   featureCatalog,
@@ -33,6 +33,7 @@ async function main(): Promise<void> {
     if (targetDirectory.length === 0) {
       throw new Error("Project directory is required.");
     }
+    await ensureTargetDirectoryIsEmpty(targetDirectory);
 
     const selection =
       options.preset === undefined

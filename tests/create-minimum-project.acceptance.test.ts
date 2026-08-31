@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -15,9 +15,16 @@ type CapabilityRow = {
   "configured tool or artifact": string;
 };
 
+type ProcessResult = {
+  readonly code: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+};
+
 describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
   let workspace: string | undefined;
   let generatedProject: string | undefined;
+  let failedOutput: ProcessResult | undefined;
 
   AfterEachScenario(async () => {
     if (workspace !== undefined) {
@@ -25,6 +32,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     }
     workspace = undefined;
     generatedProject = undefined;
+    failedOutput = undefined;
   });
 
   Scenario("Generate a new project with the Minimum preset", ({ Given, When, Then, And }) => {
@@ -169,6 +177,42 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       });
     },
   );
+
+  Scenario("Reject a non-empty target before feature selection", ({ Given, When, Then, And }) => {
+    Given(
+      "a workspace containing an existing {string} directory",
+      async (_context, projectName: string) => {
+        workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+        generatedProject = join(workspace, projectName);
+        await mkdir(generatedProject);
+        await writeFile(join(generatedProject, "existing.txt"), "keep me", "utf8");
+      },
+    );
+
+    When("I start creating {string} without a preset", async (_context, projectName: string) => {
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      generatedProject = join(currentWorkspace, projectName);
+      failedOutput = await runInteractive(
+        [resolve("dist/cli.js"), projectName],
+        currentWorkspace,
+        "",
+      );
+    });
+
+    Then("the command fails before asking any feature questions", async () => {
+      const output = requireState(failedOutput, "The CLI did not run.");
+      expect(output.code).not.toBe(0);
+      expect(output.stdout).not.toContain("Select optional features");
+    });
+
+    And("the error names the target directory on the next line", async () => {
+      const output = requireState(failedOutput, "The CLI did not run.");
+      const project = requireState(generatedProject, "The project was not named.");
+      expect(output.stderr).toContain(
+        `create-agent-stack: Target directory is not empty:\n${project}`,
+      );
+    });
+  });
 });
 
 async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
@@ -240,7 +284,7 @@ async function readJson<T>(path: string): Promise<T> {
   }
 }
 
-function requireState(value: string | undefined, message: string): string {
+function requireState<T>(value: T | undefined, message: string): T {
   if (value === undefined) {
     throw new Error(message);
   }
@@ -251,17 +295,20 @@ async function runInteractive(
   arguments_: readonly string[],
   cwd: string,
   input: string,
-): Promise<void> {
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn(process.execPath, arguments_, { cwd, stdio: ["pipe", "ignore", "pipe"] });
+): Promise<ProcessResult> {
+  return new Promise<ProcessResult>((resolvePromise, reject) => {
+    const child = spawn(process.execPath, arguments_, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
     let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
     child.once("error", reject);
     child.once("close", (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`Interactive CLI exited with ${code}: ${stderr}`));
+      resolvePromise({ code, stdout, stderr });
     });
     child.stdin.end(`${input}\n`);
   });

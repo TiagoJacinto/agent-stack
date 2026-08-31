@@ -80,7 +80,7 @@ describe("generateProject", () => {
     await writeFile(join(targetDirectory, "human-work.txt"), "keep me", "utf8");
 
     await expect(generateProject({ targetDirectory, selection: minimumSelection })).rejects.toThrow(
-      `Target directory is not empty: ${targetDirectory}`,
+      `Target directory is not empty:\n${targetDirectory}`,
     );
   });
 });
