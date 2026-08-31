@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.0.1...create-agent-stack-v1.0.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* declare npm provenance repository ([08259e3](https://github.com/TiagoJacinto/agent-stack/commit/08259e3ec6beb569c6c1b17a2ba3a487f24b81b0))
+
 ## [1.0.1](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.0.0...create-agent-stack-v1.0.1) (2026-08-31)
 
 
