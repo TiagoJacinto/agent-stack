@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.1.0...create-agent-stack-v1.1.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* reject non-empty targets before prompts ([97844c7](https://github.com/TiagoJacinto/agent-stack/commit/97844c767c2ffe39d02e5fed2c78e5a250088456))
+
 ## [1.1.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.0.2...create-agent-stack-v1.1.0) (2026-08-31)
 
 

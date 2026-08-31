@@ -1,6 +1,6 @@
 {
   "name": "@tiagojacinto/create-agent-stack",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Progressively scaffold verified, agent-ready TypeScript projects.",
   "repository": {
     "type": "git",
