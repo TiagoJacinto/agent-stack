@@ -15,11 +15,11 @@ The first milestone supports the Minimum preset.
 2. Run `node dist/cli.js my-project --preset minimum`.
 3. Enter the generated directory, install dependencies, and run `pnpm check`.
 
-The intended published command is `pnpm create agent-stack my-project`.
+The published command is `pnpm dlx @tiagojacinto/create-agent-stack my-project`.
 
 ## Automatic releases
 
-Release Please turns Conventional Commits on `main` into a release pull request. Merging that pull request updates `package.json` and `CHANGELOG.md`, creates the GitHub release and tag, then publishes `create-agent-stack` to npm after `bun run check` passes.
+Release Please turns Conventional Commits on `main` into a release pull request. Merging that pull request updates `package.json` and `CHANGELOG.md`, creates the GitHub release and tag, then publishes `@tiagojacinto/create-agent-stack` to npm after `bun run check` passes.
 
 Commit prefixes determine the version:
 

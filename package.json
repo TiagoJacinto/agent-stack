@@ -1,5 +1,5 @@
 {
-  "name": "create-agent-stack",
+  "name": "@tiagojacinto/create-agent-stack",
   "version": "1.0.0",
   "description": "Progressively scaffold verified, agent-ready TypeScript projects.",
   "type": "module",

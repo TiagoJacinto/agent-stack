@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "create-agent-stack",
+      "name": "@tiagojacinto/create-agent-stack",
       "devDependencies": {
         "@amiceli/vitest-cucumber": "^7.0.0",
         "@types/node": "^22.15.30",
