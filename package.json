@@ -2,6 +2,10 @@
   "name": "@tiagojacinto/create-agent-stack",
   "version": "1.0.1",
   "description": "Progressively scaffold verified, agent-ready TypeScript projects.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TiagoJacinto/agent-stack"
+  },
   "type": "module",
   "bin": {
     "create-agent-stack": "dist/cli.js"

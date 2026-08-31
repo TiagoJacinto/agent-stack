@@ -3,15 +3,20 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 const expectedPackageName = "@tiagojacinto/create-agent-stack";
+const expectedRepositoryUrl = "https://github.com/TiagoJacinto/agent-stack";
 
 describe("release configuration", () => {
   it("uses the available scoped npm package consistently", async () => {
-    const packageJson = await readJson<{ name: string }>("package.json");
+    const packageJson = await readJson<{
+      name: string;
+      repository: { type: string; url: string };
+    }>("package.json");
     const releaseConfig = await readJson<{
       packages: Record<string, { "package-name": string }>;
     }>("release-please-config.json");
 
     expect(packageJson.name).toBe(expectedPackageName);
+    expect(packageJson.repository).toEqual({ type: "git", url: expectedRepositoryUrl });
     expect(releaseConfig.packages["."]?.["package-name"]).toBe(expectedPackageName);
   });
 });
