@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -69,6 +69,106 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
     });
   });
+
+  Scenario(
+    "Select individual features when no preset is supplied",
+    ({ Given, When, Then, And }) => {
+      Given("an empty workspace for a new project", async () => {
+        workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+      });
+
+      When("I start creating {string} without a preset", async (_context, projectName: string) => {
+        const currentWorkspace = requireState(workspace, "The workspace was not created.");
+        generatedProject = join(currentWorkspace, projectName);
+      });
+
+      Then(
+        "I am offered these optional features:",
+        async (_context, features: { feature: string; label: string }[]) => {
+          expect(features.map(({ feature }) => feature)).toEqual([
+            "oxfmt",
+            "oxlint",
+            "vitest",
+            "agent-context",
+            "github-actions",
+            "gitleaks",
+            "dependency-audit",
+          ]);
+        },
+      );
+
+      When("I select these features:", async (_context, rows: { feature: string }[]) => {
+        const project = requireState(generatedProject, "The project was not named.");
+        const selected = new Set(rows.map(({ feature }) => feature));
+        const input = [
+          selected.has("oxfmt") ? "y" : "n",
+          selected.has("oxlint") ? "y" : "n",
+          selected.has("vitest") ? "y" : "n",
+          selected.has("agent-context") ? "y" : "n",
+          selected.has("github-actions") ? "y" : "n",
+          selected.has("gitleaks") ? "y" : "n",
+          selected.has("dependency-audit") ? "y" : "n",
+        ].join("\n");
+        await runInteractive(
+          [resolve("dist/cli.js"), project.slice(project.lastIndexOf("/") + 1)],
+          requireState(workspace, "The workspace was not created."),
+          input,
+        );
+      });
+
+      Then("the generated project includes the selected features", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const packageJson = await readJson<{ devDependencies: Record<string, string> }>(
+          join(project, "package.json"),
+        );
+        expect(packageJson.devDependencies).toHaveProperty("oxfmt");
+        expect(packageJson.devDependencies).toHaveProperty("vitest");
+        await expectFileToContain(project, ".gitleaks.toml", "useDefault = true");
+      });
+
+      And("GitHub Actions is included because secret scanning requires it", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        await expectFileToContain(project, ".github/workflows/ci.yml", "gitleaks/gitleaks-action");
+      });
+
+      And("unselected optional features are absent", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const packageJson = await readJson<{ devDependencies: Record<string, string> }>(
+          join(project, "package.json"),
+        );
+        expect(packageJson.devDependencies).not.toHaveProperty("oxlint");
+        await expect(readFile(join(project, "AGENTS.md"), "utf8")).rejects.toThrow();
+      });
+
+      And(
+        "the generated project records requested and resolved features without a preset",
+        async () => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          const manifest = await readJson<{
+            selection: { mode: string; requested: string[]; resolved: string[] };
+          }>(join(project, ".agent-stack/manifest.json"));
+          expect(manifest.selection).toEqual({
+            mode: "features",
+            requested: ["oxfmt", "vitest", "gitleaks"],
+            resolved: [
+              "typescript-node-pnpm",
+              "obvious-scripts",
+              "oxfmt",
+              "vitest",
+              "github-actions",
+              "gitleaks",
+            ],
+          });
+        },
+      );
+
+      And("installing dependencies and running the custom project checks succeeds", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "install"], project);
+        await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
+      });
+    },
+  );
 });
 
 async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
@@ -147,6 +247,26 @@ function requireState(value: string | undefined, message: string): string {
   return value;
 }
 
+async function runInteractive(
+  arguments_: readonly string[],
+  cwd: string,
+  input: string,
+): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(process.execPath, arguments_, { cwd, stdio: ["pipe", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`Interactive CLI exited with ${code}: ${stderr}`));
+    });
+    child.stdin.end(`${input}\n`);
+  });
+}
+
 async function run(command: string, arguments_: readonly string[], cwd: string): Promise<void> {
   try {
     await executeFile(command, arguments_, {
@@ -156,12 +276,16 @@ async function run(command: string, arguments_: readonly string[], cwd: string):
     });
   } catch (error) {
     if (error instanceof Error) {
-      const output = error as Error & { stdout?: string; stderr?: string };
-      throw new Error(
-        `Command failed: ${command} ${arguments_.join(" ")}\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`,
-        { cause: error },
-      );
+      throw buildCommandFailure(command, arguments_, error);
     }
     throw error;
   }
+}
+
+function buildCommandFailure(command: string, arguments_: readonly string[], error: Error): Error {
+  const output = error as Error & { stdout?: string; stderr?: string };
+  return new Error(
+    `Command failed: ${command} ${arguments_.join(" ")}\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`,
+    { cause: error },
+  );
 }

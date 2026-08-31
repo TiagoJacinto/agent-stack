@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createFeatureSelection, minimumSelection } from "../src/catalog.js";
 import { generateProject } from "../src/generator.js";
 
 const temporaryDirectories: string[] = [];
@@ -21,7 +22,7 @@ describe("generateProject", () => {
     const workspace = await createTemporaryDirectory();
     const targetDirectory = join(workspace, "Example Project");
 
-    const result = await generateProject({ targetDirectory, preset: "minimum" });
+    const result = await generateProject({ targetDirectory, selection: minimumSelection });
 
     expect(result.files).toContain(".agent-stack/manifest.json");
     const manifest = JSON.parse(
@@ -39,11 +40,46 @@ describe("generateProject", () => {
     );
   });
 
+  it("resolves dependencies and omits unselected optional features", async () => {
+    const workspace = await createTemporaryDirectory();
+    const targetDirectory = join(workspace, "Custom Project");
+
+    await generateProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxfmt", "vitest", "gitleaks"]),
+    });
+
+    const manifest = JSON.parse(
+      await readFile(join(targetDirectory, ".agent-stack/manifest.json"), "utf8"),
+    ) as { selection: { mode: string; requested: string[]; resolved: string[] } };
+    const packageJson = JSON.parse(
+      await readFile(join(targetDirectory, "package.json"), "utf8"),
+    ) as { devDependencies: Record<string, string> };
+
+    expect(manifest.selection).toEqual({
+      mode: "features",
+      requested: ["oxfmt", "vitest", "gitleaks"],
+      resolved: [
+        "typescript-node-pnpm",
+        "obvious-scripts",
+        "oxfmt",
+        "vitest",
+        "github-actions",
+        "gitleaks",
+      ],
+    });
+    expect(packageJson.devDependencies).not.toHaveProperty("oxlint");
+    await expect(
+      readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    ).resolves.toContain("gitleaks/gitleaks-action");
+    await expect(readFile(join(targetDirectory, "AGENTS.md"), "utf8")).rejects.toThrow();
+  });
+
   it("refuses to overwrite a non-empty directory", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(join(targetDirectory, "human-work.txt"), "keep me", "utf8");
 
-    await expect(generateProject({ targetDirectory, preset: "minimum" })).rejects.toThrow(
+    await expect(generateProject({ targetDirectory, selection: minimumSelection })).rejects.toThrow(
       `Target directory is not empty: ${targetDirectory}`,
     );
   });

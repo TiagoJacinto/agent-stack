@@ -1,7 +1,7 @@
 # create-agent-stack
 
 `create-agent-stack` progressively scaffolds verified, agent-ready TypeScript projects.
-The first milestone supports the Minimum preset.
+The first milestone supports the Minimum preset and individual feature selection.
 
 ## Development
 
@@ -12,10 +12,14 @@ The first milestone supports the Minimum preset.
 ## Current usage
 
 1. Build with `bun run build`.
-2. Run `node dist/cli.js my-project --preset minimum`.
+2. Run `node dist/cli.js my-project --preset minimum` for the complete Minimum setup, or omit `--preset` to choose features interactively.
 3. Enter the generated directory, install dependencies, and run `pnpm check`.
 
 The published command is `pnpm dlx @tiagojacinto/create-agent-stack my-project`.
+
+When `--preset` is omitted, the CLI asks about each optional feature: formatting, linting, unit testing, agent context, GitHub Actions, secret scanning, and dependency auditing. Type `y` to include a feature. TypeScript, Node.js, pnpm, and the core scripts are always included. Selecting a feature also selects its dependencies; for example, secret scanning includes GitHub Actions.
+
+The generated project continues to use pnpm, regardless of the package manager used to run this scaffolder.
 
 ## Automatic releases
 
