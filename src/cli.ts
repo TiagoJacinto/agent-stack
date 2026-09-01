@@ -7,6 +7,7 @@ import { ensureTargetDirectoryIsEmpty, generateProject } from "./generator.js";
 import {
   createFeatureSelection,
   featureCatalog,
+  lowSelection,
   minimumSelection,
   type OptionalFeatureId,
 } from "./catalog.js";
@@ -40,7 +41,10 @@ async function main(): Promise<void> {
         ? await promptForFeatures(input)
         : presetSelection(options.preset);
     const result = await generateProject({ targetDirectory, selection });
-    const origin = selection.mode === "preset" ? "the Minimum preset" : "selected features";
+    const origin =
+      selection.mode === "preset"
+        ? `the ${capitalize(selection.preset)} preset`
+        : "selected features";
 
     stdout.write(
       `Created ${result.directory} with ${origin} (${result.files.length} files).\n` +
@@ -79,10 +83,13 @@ function parseArguments(arguments_: readonly string[]): CliOptions {
 }
 
 function presetSelection(value: string) {
-  if (value !== "minimum") {
-    throw new Error(`Unknown preset "${value}". Available preset: minimum.`);
-  }
-  return minimumSelection;
+  if (value === "minimum") return minimumSelection;
+  if (value === "low") return lowSelection;
+  throw new Error(`Unknown preset "${value}". Available presets: minimum, low.`);
+}
+
+function capitalize(value: string): string {
+  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
 }
 
 async function promptForFeatures(input: InputReader) {

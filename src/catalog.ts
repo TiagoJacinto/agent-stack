@@ -1,4 +1,4 @@
-export const presets = ["minimum"] as const;
+export const presets = ["minimum", "low"] as const;
 
 export type Preset = (typeof presets)[number];
 
@@ -8,6 +8,7 @@ export const featureCatalog = [
   { id: "oxfmt", label: "Formatting", dependencies: [] },
   { id: "oxlint", label: "Linting", dependencies: [] },
   { id: "vitest", label: "Unit testing", dependencies: [] },
+  { id: "mutation-testing", label: "Mutation testing", dependencies: ["vitest"] },
   { id: "agent-context", label: "Agent context", dependencies: [] },
   { id: "github-actions", label: "GitHub Actions", dependencies: [] },
   { id: "gitleaks", label: "Secret scanning", dependencies: ["github-actions"] },
@@ -33,13 +34,30 @@ export interface CustomFeatureSelection {
 
 export type FeatureSelection = PresetFeatureSelection | CustomFeatureSelection;
 
-const minimumFeatures = featureCatalog.map(({ id }) => id);
+const minimumFeatures: readonly OptionalFeatureId[] = [
+  "oxfmt",
+  "oxlint",
+  "vitest",
+  "agent-context",
+  "github-actions",
+  "gitleaks",
+  "dependency-audit",
+];
+
+const lowFeatures: readonly OptionalFeatureId[] = [...minimumFeatures, "mutation-testing"];
 
 export const minimumSelection: PresetFeatureSelection = {
   mode: "preset",
   preset: "minimum",
   requested: minimumFeatures,
   features: resolveFeatures(minimumFeatures),
+};
+
+export const lowSelection: PresetFeatureSelection = {
+  mode: "preset",
+  preset: "low",
+  requested: lowFeatures,
+  features: resolveFeatures(lowFeatures),
 };
 
 export function createFeatureSelection(

@@ -23,6 +23,8 @@ export function projectFiles(
       node_modules/
       dist/
       coverage/
+      reports/
+      .stryker-tmp/
       .DS_Store
     `,
     "README.md": projectReadme(projectName, selection),
@@ -32,6 +34,9 @@ export function projectFiles(
   if (has(selection, "vitest")) {
     files["vitest.config.ts"] = vitestConfig();
     files["tests/index.test.ts"] = exampleTest();
+  }
+  if (has(selection, "mutation-testing")) {
+    files["stryker.config.mjs"] = strykerConfig();
   }
   if (has(selection, "github-actions")) {
     files[".github/workflows/ci.yml"] = githubWorkflow(selection);
@@ -82,6 +87,11 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
     scripts.test = "vitest run";
     devDependencies.vitest = "^3.2.2";
     checks.push("pnpm test");
+  }
+  if (has(selection, "mutation-testing")) {
+    scripts.mutation = "stryker run";
+    devDependencies["@stryker-mutator/core"] = "^10.0.0";
+    devDependencies["@stryker-mutator/vitest-runner"] = "^10.0.0";
   }
   scripts.check = checks.join(" && ");
 
@@ -146,6 +156,17 @@ function vitestConfig(): string {
         include: ["tests/**/*.test.ts"],
       },
     });
+  `;
+}
+
+function strykerConfig(): string {
+  return text`
+    export default {
+      testRunner: "vitest",
+      plugins: ["@stryker-mutator/vitest-runner"],
+      reporters: ["clear-text", "html"],
+      mutate: ["src/**/*.ts"],
+    };
   `;
 }
 
@@ -224,6 +245,7 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
     "- `pnpm dev` — run the entry point in watch mode.",
     "- `pnpm build` — compile production output.",
     has(selection, "vitest") ? "- `pnpm test` — run unit tests." : "",
+    has(selection, "mutation-testing") ? "- `pnpm mutation` — run Stryker mutation tests." : "",
     "- `pnpm check` — run every configured project check.",
   ]
     .filter(Boolean)

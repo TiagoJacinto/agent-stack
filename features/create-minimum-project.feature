@@ -23,6 +23,7 @@ Feature: Create an agent stack project
       | oxfmt               | Formatting          |
       | oxlint              | Linting              |
       | vitest              | Unit testing         |
+      | mutation-testing    | Mutation testing     |
       | agent-context       | Agent context        |
       | github-actions      | GitHub Actions       |
       | gitleaks            | Secret scanning      |

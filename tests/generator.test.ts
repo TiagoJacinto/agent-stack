@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createFeatureSelection, minimumSelection } from "../src/catalog.js";
+import { createFeatureSelection, lowSelection, minimumSelection } from "../src/catalog.js";
 import { generateProject } from "../src/generator.js";
 
 const temporaryDirectories: string[] = [];
@@ -37,6 +37,32 @@ describe("generateProject", () => {
     expect(packageJson.name).toBe("example-project");
     expect(Object.keys(packageJson.scripts)).toEqual(
       expect.arrayContaining(["dev", "build", "test", "check"]),
+    );
+  });
+
+  it("generates the Low preset with mutation testing", async () => {
+    const workspace = await createTemporaryDirectory();
+    const targetDirectory = join(workspace, "Low Project");
+
+    const result = await generateProject({ targetDirectory, selection: lowSelection });
+
+    const manifest = JSON.parse(
+      await readFile(join(targetDirectory, ".agent-stack/manifest.json"), "utf8"),
+    ) as { preset: string; features: string[] };
+    const packageJson = JSON.parse(
+      await readFile(join(targetDirectory, "package.json"), "utf8"),
+    ) as { devDependencies: Record<string, string>; scripts: Record<string, string> };
+
+    expect(manifest.preset).toBe("low");
+    expect(manifest.features).toEqual(
+      expect.arrayContaining(["vitest", "mutation-testing", "gitleaks", "dependency-audit"]),
+    );
+    expect(packageJson.devDependencies).toHaveProperty("@stryker-mutator/core");
+    expect(packageJson.devDependencies).toHaveProperty("@stryker-mutator/vitest-runner");
+    expect(packageJson.scripts.mutation).toBe("stryker run");
+    expect(result.files).toContain("stryker.config.mjs");
+    await expect(readFile(join(targetDirectory, "stryker.config.mjs"), "utf8")).resolves.toContain(
+      'testRunner: "vitest"',
     );
   });
 
