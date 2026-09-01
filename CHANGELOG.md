@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.1.1...create-agent-stack-v1.2.0) (2026-09-01)
+
+
+### Features
+
+* add low preset with mutation testing ([6fbcdd7](https://github.com/TiagoJacinto/agent-stack/commit/6fbcdd7aec98dd742ab28ba284aa56053704467e))
+
 ## [1.1.1](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.1.0...create-agent-stack-v1.1.1) (2026-08-31)
 
 
