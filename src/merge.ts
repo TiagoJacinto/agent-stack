@@ -11,7 +11,6 @@ const markdownStart = "<!-- agent-stack:start -->";
 const markdownEnd = "<!-- agent-stack:end -->";
 
 export function prepareNewFile(relativePath: string, generatedContent: string): string {
-  if (relativePath === "package.json") return mergePackageJson("{}", generatedContent);
   if (relativePath.endsWith(".md")) return mergeMarkdown("", generatedContent);
   return generatedContent;
 }
@@ -377,13 +376,17 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
   ) {
     return reconciled(merged);
   }
+  const coreLocal = coreLocals[0] ?? "core";
   let replacement: string;
   if (expression.startsWith("[")) {
-    const entries = expression.slice(1, -1).trim();
-    replacement =
-      entries.length === 0 ? "[core]" : `[${entries}${entries.endsWith(",") ? "" : ","} core]`;
+    const existingEntries = arrayValueEntries(expression);
+    const additions = [coreLocal];
+    const mergedValue = hasArrayComment(expression)
+      ? appendArrayEntriesPreservingComments(expression, additions)
+      : `[${[...existingEntries, ...additions].join(", ")}]`;
+    replacement = mergedValue;
   } else {
-    replacement = `[${expression}, core]`;
+    replacement = `[${expression}, ${coreLocal}]`;
   }
   merged =
     merged.slice(0, exportExpression.start) +
@@ -400,7 +403,11 @@ function mergeVitestConfig(existingContent: string, generatedContent: string): R
   let merged = imports.content;
   const generatedInclude = arrayEntries(generatedContent, "include");
   if (generatedInclude.length > 0) {
+    const testProperty = topLevelProperty(merged, configObjectOpen(merged), "test");
     const testObject = propertyObjectOpen(merged, "test");
+    if (testObject === undefined && testProperty !== undefined) {
+      return { content: existingContent, changed: false, conflicts: ["vitest.config.ts:test"] };
+    }
     if (testObject === undefined) {
       merged = insertConfigProperty(
         merged,
@@ -864,6 +871,9 @@ function mergeWorkflowSteps(
   const stepsCommentStart = yamlCommentStart(rawStepsValue);
   const stepsValue =
     stepsCommentStart < 0 ? rawStepsValue : rawStepsValue.slice(0, stepsCommentStart).trim();
+  if (stepsValue.length > 0 && (!stepsValue.startsWith("[") || !stepsValue.endsWith("]"))) {
+    return lines;
+  }
   if (stepsValue.startsWith("[") && stepsValue.endsWith("]")) {
     const indentation = existingStepsLine.match(/^\s*/)?.[0] ?? "";
     const comment =
@@ -1450,8 +1460,8 @@ function pluginEntries(content: string): { readonly name: string; readonly speci
   const plugins: { name: string; specifier: string }[] = [];
   for (const entry of arrayValueEntries(array)) {
     const name = /\bname\s*:\s*(["'])([^"']+)\1/.exec(entry)?.[2];
-    const specifier = /\bspecifier\s*:\s*(["'])([^"']+)\1/.exec(entry)?.[2];
-    if (name !== undefined && specifier !== undefined) plugins.push({ name, specifier });
+    const specifier = /\bspecifier\s*:\s*(["'])([^"']+)\1/.exec(entry)?.[2] ?? "";
+    if (name !== undefined) plugins.push({ name, specifier });
   }
   return plugins;
 }
