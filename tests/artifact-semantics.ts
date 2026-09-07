@@ -117,14 +117,19 @@ export function parseWorkflow(content: string): WorkflowModel {
     }
 
     if (section === "jobs" && indentation === 4 && currentJob !== undefined) {
-      readingSteps = value === "steps:";
+      readingSteps = yamlEntry(value)?.key === "steps";
       continue;
     }
 
     if (section === "jobs" && indentation === 6 && readingSteps && value.startsWith("- ")) {
-      const entry = yamlEntry(value.slice(2));
+      const stepValue = value.slice(2).trim();
+      const entry = yamlEntry(
+        stepValue.startsWith("{") && stepValue.endsWith("}")
+          ? stepValue.slice(1, -1).trim()
+          : stepValue,
+      );
       if ((entry?.key === "run" || entry?.key === "uses") && currentJob !== undefined) {
-        currentJob.steps.push({ [entry.key]: entry.value });
+        currentJob.steps.push({ [entry.key]: entry.value.replace(/\s*,\s*$/, "") });
       }
     }
   }
@@ -135,7 +140,14 @@ export function parseWorkflow(content: string): WorkflowModel {
 function yamlEntry(value: string): { readonly key: string; readonly value: string } | undefined {
   const separator = value.indexOf(":");
   if (separator <= 0) return undefined;
-  return { key: value.slice(0, separator), value: value.slice(separator + 1).trim() };
+  const rawKey = value.slice(0, separator).trim();
+  const key =
+    rawKey.length >= 2 &&
+    ((rawKey.startsWith('"') && rawKey.endsWith('"')) ||
+      (rawKey.startsWith("'") && rawKey.endsWith("'")))
+      ? rawKey.slice(1, -1)
+      : rawKey;
+  return { key, value: value.slice(separator + 1).trim() };
 }
 
 function flowArray(value: string): readonly string[] {
