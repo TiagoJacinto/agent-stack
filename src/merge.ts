@@ -466,6 +466,31 @@ function mergeObjectConfig(existingContent: string, generatedContent: string): R
   return reconciled(merged);
 }
 
+function normalizeInlineYamlSection(lines: string[], section: YamlSection): string[] {
+  const line = lines[section.start] ?? "";
+  const replacement = normalizeInlineYamlMapLine(line);
+  if (replacement.length === 1 && replacement[0] === line) return lines;
+  lines.splice(section.start, section.end - section.start, ...replacement);
+  return lines;
+}
+
+function normalizeInlineYamlMapLine(line: string): string[] {
+  const indentation = line.match(/^\s*/)?.[0] ?? "";
+  const keyValue = line.slice(indentation.length);
+  const separator = inlineYamlColon(keyValue);
+  if (separator < 0) return [line];
+  const key = normalizeYamlScalar(keyValue.slice(0, separator));
+  const rawValue = keyValue.slice(separator + 1).trim();
+  const commentStart = yamlCommentStart(rawValue);
+  const value = (commentStart < 0 ? rawValue : rawValue.slice(0, commentStart)).trim();
+  if (!value.startsWith("{") || !value.endsWith("}")) return [line];
+  const comment = commentStart < 0 ? "" : ` ${rawValue.slice(commentStart).trim()}`;
+  return [
+    `${indentation}${key}:${comment}`,
+    ...inlineYamlProperties(value).map((entry) => `${indentation}  ${entry}`),
+  ];
+}
+
 function mergeWorkflow(existingContent: string, generatedContent: string): string {
   let lines = existingContent.split("\n");
   const existingOn = yamlSections(lines.join("\n"), 0).find((section) => section.name === "on");
@@ -479,7 +504,10 @@ function mergeWorkflow(existingContent: string, generatedContent: string): strin
       lines = appendYamlBlock(lines, section.block);
       continue;
     }
-    if (section.name === "on" || section.name === "jobs") {
+    if (section.name === "on" || section.name === "jobs" || section.name === "permissions") {
+      if (section.name === "permissions") {
+        lines = normalizeInlineYamlSection(lines, existingSection);
+      }
       lines = mergeYamlChildren(
         lines,
         existingSection.name,
@@ -765,7 +793,12 @@ function mergeWorkflowBranches(
 ): string[] {
   const pushStart = onSection.start + existingPush.start;
   const pushEnd = onSection.start + existingPush.end;
-  const existingLines = lines.slice(pushStart, pushEnd);
+  let existingLines = lines.slice(pushStart, pushEnd);
+  const normalizedPush = normalizeInlineYamlMapLine(existingLines[0] ?? "");
+  if (normalizedPush.length > 1) {
+    lines.splice(pushStart, existingLines.length, ...normalizedPush);
+    existingLines = normalizedPush;
+  }
   const generatedBranches = yamlBranches(generatedPush.block);
   if (generatedBranches === undefined) return lines;
   const existingBranches = yamlBranches(existingLines.join("\n"));
@@ -881,7 +914,7 @@ function yamlStepIdentity(line: string): string | undefined {
   if (item.startsWith("{") && item.endsWith("}")) {
     for (const key of ["uses", "run"]) {
       const entry = inlineYamlProperty(item, key);
-      if (entry !== undefined) return `${key}: ${yamlValueWithoutComment(entry).trim()}`;
+      if (entry !== undefined) return `${key}: ${normalizeYamlScalar(entry)}`;
     }
     return undefined;
   }
@@ -889,7 +922,7 @@ function yamlStepIdentity(line: string): string | undefined {
   if (separator < 0) return undefined;
   const key = normalizeYamlScalar(item.slice(0, separator));
   if (key !== "uses" && key !== "run") return undefined;
-  return `${key}: ${yamlValueWithoutComment(item.slice(separator + 1)).trim()}`;
+  return `${key}: ${normalizeYamlScalar(item.slice(separator + 1))}`;
 }
 
 function inlineYamlProperty(value: string, property: string): string | undefined {
@@ -1177,6 +1210,10 @@ function expressionEnd(content: string, start: number, limit: number): number {
       index += 1;
       continue;
     }
+    if (character === "/" && isRegexStart(content, index)) {
+      index = regexLiteralEnd(content, index);
+      continue;
+    }
     if (character === "{") {
       curlyDepth += 1;
       sawDelimiter = true;
@@ -1304,13 +1341,14 @@ function hasArrayComment(value: string): boolean {
 }
 
 function appendArrayEntriesPreservingComments(value: string, additions: readonly string[]): string {
-  const body = value.trim().slice(1, -1);
-  const commentStart = arrayCommentStart(body);
-  if (commentStart < 0) return `[${additions.join(", ")}]`;
-  const prefix = body.slice(0, commentStart).trimEnd();
-  const comment = body.slice(commentStart).trim();
-  const separator = prefix.length === 0 || prefix.endsWith(",") ? "" : ",";
-  return `[${prefix}${separator}\n${additions.join(",\n")}\n${comment}\n]`;
+  const trimmedValue = value.trim();
+  const body = trimmedValue.slice(1, -1);
+  const codeBody = removeArrayComments(body).trimEnd();
+  const lastCodeIndex = codeBody.length - 1;
+  const prefix = body.slice(0, Math.max(0, lastCodeIndex + 1));
+  const suffix = body.slice(Math.max(0, lastCodeIndex + 1));
+  const separator = lastCodeIndex >= 0 && !codeBody.endsWith(",") ? "," : "";
+  return `[${prefix}${separator}${suffix}\n${additions.join(",\n")}\n]`;
 }
 
 function arrayCommentStart(body: string): number {
@@ -1520,6 +1558,10 @@ function defaultExportStatementEnd(content: string, start: number): number {
       blockComment = true;
       continue;
     }
+    if (character === "/" && isRegexStart(content, index)) {
+      index = regexLiteralEnd(content, index);
+      continue;
+    }
     if (character === "{") curlyDepth += 1;
     if (character === "}") curlyDepth -= 1;
     if (character === "[") bracketDepth += 1;
@@ -1621,6 +1663,10 @@ function matchingDelimiter(
       blockComment = true;
       continue;
     }
+    if (character === "/" && isRegexStart(content, index)) {
+      index = regexLiteralEnd(content, index);
+      continue;
+    }
     if (character === openChar) depth += 1;
     if (character === closeChar) {
       depth -= 1;
@@ -1648,6 +1694,44 @@ function asJsonArray(value: JsonValue | undefined): JsonValue[] {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRegexStart(content: string, index: number): boolean {
+  let previous = index - 1;
+  while (previous >= 0 && /\s/.test(content[previous] ?? "")) previous -= 1;
+  if (previous < 0) return true;
+  const character = content[previous] ?? "";
+  if ("=(:,[!&|?{};".includes(character)) return true;
+  return /\b(?:return|case|throw|else|typeof|void|delete|in|of)$/.test(
+    content.slice(0, previous + 1),
+  );
+}
+
+function regexLiteralEnd(content: string, start: number): number {
+  let escaped = false;
+  let characterClass = false;
+  for (let index = start + 1; index < content.length; index += 1) {
+    const character = content[index] ?? "";
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === "[") {
+      characterClass = true;
+      continue;
+    }
+    if (character === "]") {
+      characterClass = false;
+      continue;
+    }
+    if (character === "/" && !characterClass) return index;
+    if (character === "\n") return start;
+  }
+  return content.length - 1;
 }
 
 function codeIndexOf(content: string, needle: string): number {
@@ -1687,6 +1771,10 @@ function codeIndexOf(content: string, needle: string): number {
     if (character === "/" && nextCharacter === "*") {
       blockComment = true;
       index += 1;
+      continue;
+    }
+    if (character === "/" && isRegexStart(content, index)) {
+      index = regexLiteralEnd(content, index);
       continue;
     }
     if (content.startsWith(needle, index)) return index;

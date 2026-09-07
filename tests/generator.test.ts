@@ -302,11 +302,13 @@ describe("generateProject", () => {
     const workflowPath = join(targetDirectory, ".github/workflows/ci.yml");
     const workflowContent = await readFile(workflowPath, "utf8");
     const workflow = parseWorkflow(workflowContent);
-    expect(workflow.triggers.push).toEqual({ branches: ["develop", "main"] });
     expect(workflow.jobs.verify?.steps).toEqual(
       expect.arrayContaining([{ run: '"echo existing"' }, { uses: "actions/checkout@v4" }]),
     );
-    expect(workflowContent).toContain('"paths": ["src/**"]');
+    expect(workflow.triggers.push).toEqual({
+      branches: ["develop", "main"],
+      paths: ["src/**"],
+    });
   });
 
   it("ignores commented configuration tokens and preserves aliased linter imports", async () => {

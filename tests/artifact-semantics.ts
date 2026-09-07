@@ -46,12 +46,15 @@ export function evaluateGeneratedModule<T>(
 export type WorkflowStep = Readonly<Partial<Record<"run" | "uses", string>>>;
 
 export interface WorkflowModel {
-  readonly triggers: Record<string, { readonly branches?: readonly string[] }>;
+  readonly triggers: Record<
+    string,
+    { readonly branches?: readonly string[]; readonly paths?: readonly string[] }
+  >;
   readonly jobs: Record<string, { readonly steps: readonly WorkflowStep[] }>;
 }
 
 export function parseWorkflow(content: string): WorkflowModel {
-  const triggers: Record<string, { branches?: readonly string[] }> = {};
+  const triggers: Record<string, { branches?: readonly string[]; paths?: readonly string[] }> = {};
   const jobs: Record<string, { steps: WorkflowStep[] }> = {};
   let section: "on" | "jobs" | undefined;
   let currentTrigger: string | undefined;
@@ -89,10 +92,13 @@ export function parseWorkflow(content: string): WorkflowModel {
 
     if (section === "on" && indentation === 4 && currentTrigger !== undefined) {
       const entry = yamlEntry(value);
-      if (entry?.key === "branches") {
+      if (entry?.key === "branches" || entry?.key === "paths") {
         if (entry.value.length > 0) {
-          triggers[currentTrigger] = { branches: flowArray(entry.value) };
-        } else {
+          triggers[currentTrigger] = {
+            ...triggers[currentTrigger],
+            [entry.key]: flowArray(entry.value),
+          };
+        } else if (entry.key === "branches") {
           const branches: string[] = [];
           let branchIndex = index + 1;
           for (; branchIndex < lines.length; branchIndex += 1) {
@@ -100,7 +106,7 @@ export function parseWorkflow(content: string): WorkflowModel {
             if (branch === null || (branch[0]?.search(/\S/) ?? 0) <= indentation) break;
             branches.push(branch[1] ?? "");
           }
-          triggers[currentTrigger] = { branches };
+          triggers[currentTrigger] = { ...triggers[currentTrigger], branches };
           index = branchIndex - 1;
         }
       }
@@ -157,7 +163,14 @@ function flowArray(value: string): readonly string[] {
     .slice(1, -1)
     .split(",")
     .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+    .filter((entry) => entry.length > 0)
+    .map((entry) =>
+      entry.length >= 2 &&
+      ((entry.startsWith('"') && entry.endsWith('"')) ||
+        (entry.startsWith("'") && entry.endsWith("'")))
+        ? entry.slice(1, -1)
+        : entry,
+    );
 }
 
 function yamlValueWithoutComment(value: string): string {
