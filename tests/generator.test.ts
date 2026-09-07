@@ -272,6 +272,41 @@ describe("generateProject", () => {
     expect(eslint.map(({ id }) => id)).toEqual(["custom-eslint", "eslint-core"]);
   });
 
+  it("recognizes multiline imports when merging configuration", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import {\n  defineConfig,\n} from "oxlint";\n\nexport default defineConfig({});\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+      await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"),
+    );
+    expect(config.extends.map(({ id }) => id)).toEqual(["ultracite-core"]);
+  });
+
+  it("merges array entries by normalized values", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "vitest.config.ts"),
+      'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  test: { include: [\'tests/**/*.test.ts\', \'tests,unit/**/*.ts\'] },\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({ targetDirectory, selection: createFeatureSelection(["vitest"]) });
+
+    const config = evaluateGeneratedModule<{ test: { include: string[] } }>(
+      await readFile(join(targetDirectory, "vitest.config.ts"), "utf8"),
+    );
+    expect(config.test.include).toEqual(["tests/**/*.test.ts", "tests,unit/**/*.ts"]);
+  });
+
   it("preserves a multiline ESLint object export", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
@@ -426,6 +461,14 @@ describe("generateProject", () => {
     await expect(mergeProject({ targetDirectory, selection: minimumSelection })).rejects.toThrow(
       "Template path uses a symlinked ancestor",
     );
+  });
+
+  it("aborts before writing when a managed path is a directory", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".gitignore"));
+
+    await expect(mergeProject({ targetDirectory, selection: minimumSelection })).rejects.toThrow();
+    await expect(readFile(join(targetDirectory, "package.json"), "utf8")).rejects.toThrow();
   });
 });
 

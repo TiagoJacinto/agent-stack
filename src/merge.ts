@@ -622,11 +622,29 @@ function mergeImports(
 }
 
 function importLines(content: string): string[] {
-  return content.split("\n").filter((line) => /^import\s/.test(line.trim()));
+  const lines = content.split("\n");
+  const imports: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^import\s/.test(lines[index]?.trim() ?? "")) continue;
+    let statement = lines[index]?.trim() ?? "";
+    while (!isCompleteImport(statement) && index + 1 < lines.length) {
+      index += 1;
+      statement += `\n${lines[index]?.trim() ?? ""}`;
+    }
+    if (isCompleteImport(statement)) imports.push(statement);
+  }
+  return imports;
+}
+
+function isCompleteImport(statement: string): boolean {
+  return (
+    /\bfrom\s+["'][^"']+["']\s*;?\s*$/.test(statement) ||
+    /^import\s+["'][^"']+["']\s*;?\s*$/.test(statement)
+  );
 }
 
 function importBindings(line: string): readonly ImportBinding[] {
-  const match = /^import\s+(.+?)\s+from\s+["']([^"']+)["']/.exec(line.trim());
+  const match = /^import\s+([\s\S]+?)\s+from\s+["']([^"']+)["']/.exec(line.trim());
   if (match === null) return [];
   const clause = match[1]?.trim() ?? "";
   const source = match[2] ?? "";
@@ -648,10 +666,7 @@ function importBindings(line: string): readonly ImportBinding[] {
 function arrayEntries(content: string, property: string): string[] {
   const match = new RegExp(`${escapeRegExp(property)}\\s*:\\s*\\[([\\s\\S]*?)\\]`).exec(content);
   if (match === null) return [];
-  return (match[1] ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  return arrayValueEntries(`[${match[1] ?? ""}]`);
 }
 
 function mergeArrayProperty(
@@ -680,10 +695,14 @@ function mergeArrayProperty(
   }
 
   const existingEntries = arrayValueEntries(existingValue);
-  const entries = [
-    ...existingEntries,
-    ...generatedEntries.filter((entry) => !existingEntries.includes(entry)),
-  ];
+  const seen = new Set(existingEntries.map(normalizeArrayEntry));
+  const entries = [...existingEntries];
+  for (const entry of generatedEntries) {
+    const normalized = normalizeArrayEntry(entry);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    entries.push(entry);
+  }
   return {
     content:
       content.slice(0, existingProperty.start) +
@@ -764,11 +783,61 @@ function expressionEnd(content: string, start: number, limit: number): number {
 }
 
 function arrayValueEntries(value: string): string[] {
-  return value
-    .slice(1, -1)
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  const body = value.trim().slice(1, -1);
+  const entries: string[] = [];
+  let start = 0;
+  let curlyDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote = "";
+  let escaped = false;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") curlyDepth += 1;
+    if (character === "}") curlyDepth -= 1;
+    if (character === "[") bracketDepth += 1;
+    if (character === "]") bracketDepth -= 1;
+    if (character === "(") parenDepth += 1;
+    if (character === ")") parenDepth -= 1;
+    if (
+      character === "," &&
+      curlyDepth === 0 &&
+      bracketDepth === 0 &&
+      parenDepth === 0
+    ) {
+      const entry = body.slice(start, index).trim();
+      if (entry.length > 0) entries.push(entry);
+      start = index + 1;
+    }
+  }
+
+  const lastEntry = body.slice(start).trim();
+  if (lastEntry.length > 0) entries.push(lastEntry);
+  return entries;
+}
+
+function normalizeArrayEntry(entry: string): string {
+  const trimmed = entry.trim();
+  const first = trimmed[0];
+  const last = trimmed.at(-1);
+  if (
+    trimmed.length >= 2 &&
+    ((first === "'" && last === "'") || (first === '"' && last === '"'))
+  ) {
+    return trimmed.slice(1, -1).replace(/\\([\\'"`])/g, "$1");
+  }
+  return trimmed;
 }
 
 function mergePlugins(

@@ -108,7 +108,7 @@ async function readExistingFile(destination: string): Promise<string | undefined
     return await readFile(destination, "utf8");
   } catch (error) {
     if (isMissingDirectory(error)) return undefined;
-    return "";
+    throw error;
   }
 }
 

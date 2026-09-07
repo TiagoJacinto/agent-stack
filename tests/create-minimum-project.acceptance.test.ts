@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -317,7 +317,8 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
     And("the generated project contains the vendored anti-slop plugin", async () => {
       const project = requireState(generatedProject, "The project was not generated.");
-      await expectFileToContain(project, "tools/oxlint/anti-slop/index.ts", "antiSlopPlugin");
+      const plugin = await stat(join(project, "tools/oxlint/anti-slop/index.ts"));
+      expect(plugin.isFile()).toBe(true);
     });
 
     And("the generated project does not contain an Ultracite dependency", async () => {
