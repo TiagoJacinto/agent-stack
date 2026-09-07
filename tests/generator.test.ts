@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createFeatureSelection, lowSelection, minimumSelection } from "../src/catalog.js";
 import { generateProject, mergeProject } from "../src/generator.js";
+import {
+  evaluateGeneratedModule,
+  parseWorkflow,
+} from "./artifact-semantics.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -69,9 +73,12 @@ describe("generateProject", () => {
     expect(packageJson.devDependencies).toHaveProperty("@stryker-mutator/vitest-runner");
     expect(packageJson.scripts.mutation).toBe("stryker run");
     expect(result.files).toContain("stryker.config.mjs");
-    await expect(readFile(join(targetDirectory, "stryker.config.mjs"), "utf8")).resolves.toContain(
-      'testRunner: "vitest"',
-    );
+    const stryker = evaluateGeneratedModule<{
+      testRunner: string;
+      plugins: string[];
+    }>(await readFile(join(targetDirectory, "stryker.config.mjs"), "utf8"));
+    expect(stryker.testRunner).toBe("vitest");
+    expect(stryker.plugins).toContain("@stryker-mutator/vitest-runner");
   });
 
   it("resolves dependencies and omits unselected optional features", async () => {
@@ -103,9 +110,10 @@ describe("generateProject", () => {
       ],
     });
     expect(packageJson.devDependencies).not.toHaveProperty("oxlint");
-    await expect(
-      readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
-    ).resolves.toContain("gitleaks/gitleaks-action");
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.jobs.verify?.steps).toContainEqual({ uses: "gitleaks/gitleaks-action@v2" });
     await expect(readFile(join(targetDirectory, "AGENTS.md"), "utf8")).rejects.toThrow();
   });
 
@@ -204,18 +212,33 @@ describe("generateProject", () => {
       compilerOptions: { paths: Record<string, string[]> };
       include: string[];
     };
-    const oxlint = await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8");
-    const workflow = await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8");
+    const oxlint = evaluateGeneratedModule<{
+      extends: { id: string }[];
+      rules: Record<string, string>;
+    }>(await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"));
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
 
     expect(first.files).toContain("tsconfig.json");
     expect(tsconfig.compilerOptions.paths["@/*"]).toEqual(["src/*"]);
     expect(tsconfig.include).toEqual(["src/**/*.ts", "tests/**/*.ts", "custom/**/*.ts"]);
-    expect(oxlint).toContain('"no-alert": "warn"');
-    expect(oxlint).toContain("extends: [core, antislop]");
-    expect(workflow).toContain("pull_request:");
-    expect(workflow).toContain("build:");
-    expect(workflow).toContain("verify:");
-    expect(workflow).toContain("actions/checkout@v4");
+    expect(oxlint.rules).toEqual({ "no-alert": "warn" });
+    expect(oxlint.extends.map(({ id }) => id)).toEqual([
+      "ultracite-core",
+      "ultracite-anti-slop",
+    ]);
+    expect(workflow.triggers).toEqual(
+      expect.objectContaining({ pull_request: {}, push: { branches: ["develop", "main"] } }),
+    );
+    expect(workflow.jobs).toEqual(
+      expect.objectContaining({
+        build: { steps: [{ run: "echo build" }] },
+        verify: expect.objectContaining({
+          steps: expect.arrayContaining([{ uses: "actions/checkout@v4" }]),
+        }),
+      }),
+    );
 
     const second = await mergeProject({ targetDirectory, selection: minimumSelection });
     expect(second.files).toEqual([]);
@@ -239,11 +262,14 @@ describe("generateProject", () => {
       selection: createFeatureSelection(["oxlint", "eslint", "ultracite"]),
     });
 
-    const oxlint = await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8");
-    const eslint = await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8");
-    expect(oxlint.match(/ultracite\/oxlint\/core/g)).toHaveLength(1);
-    expect(eslint).toContain('import core from "ultracite/eslint/core";');
-    expect(eslint).toContain("[custom, core]");
+    const oxlint = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+      await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"),
+    );
+    const eslint = evaluateGeneratedModule<{ id: string }[]>(
+      await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"),
+    );
+    expect(oxlint.extends.map(({ id }) => id)).toEqual(["ultracite-core"]);
+    expect(eslint.map(({ id }) => id)).toEqual(["custom-eslint", "eslint-core"]);
   });
 
   it("reports every conflicting managed path before writing files", async () => {
@@ -263,6 +289,20 @@ describe("generateProject", () => {
       "keep me\n",
     );
     await expect(readFile(join(targetDirectory, "tsconfig.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("refuses to merge through a symlinked managed file", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    const outsideDirectory = await createTemporaryDirectory();
+    const outsideManifest = join(outsideDirectory, "manifest.json");
+    await writeFile(outsideManifest, '{"owned":"outside"}\n', "utf8");
+    await mkdir(join(targetDirectory, ".agent-stack"), { recursive: true });
+    await symlink(outsideManifest, join(targetDirectory, ".agent-stack/manifest.json"));
+
+    await expect(mergeProject({ targetDirectory, selection: minimumSelection })).rejects.toThrow(
+      "Template path uses a symlink",
+    );
+    await expect(readFile(outsideManifest, "utf8")).resolves.toBe('{"owned":"outside"}\n');
   });
 });
 

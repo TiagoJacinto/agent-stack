@@ -1,5 +1,5 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import type { FeatureSelection } from "./catalog.js";
 import { prepareNewFile, reconcileFile } from "./merge.js";
@@ -66,8 +66,9 @@ async function writeFiles(
 ): Promise<void> {
   for (const [relativePath, content] of Object.entries(files)) {
     const destination = resolve(directory, relativePath);
-    assertSafeDestination(directory, relativePath, destination);
+    await assertSafeDestination(directory, relativePath, destination);
     await mkdir(dirname(destination), { recursive: true });
+    await assertSafeDestination(directory, relativePath, destination);
     await writeFile(destination, content, "utf8");
   }
 }
@@ -81,7 +82,7 @@ async function planMerge(
 
   for (const [relativePath, generatedContent] of Object.entries(files)) {
     const destination = resolve(directory, relativePath);
-    assertSafeDestination(directory, relativePath, destination);
+    await assertSafeDestination(directory, relativePath, destination);
     const existingContent = await readExistingFile(destination);
 
     if (existingContent === undefined) {
@@ -111,9 +112,32 @@ async function readExistingFile(destination: string): Promise<string | undefined
   }
 }
 
-function assertSafeDestination(directory: string, relativePath: string, destination: string): void {
+async function assertSafeDestination(
+  directory: string,
+  relativePath: string,
+  destination: string,
+): Promise<void> {
   if (!destination.startsWith(`${directory}/`)) {
     throw new Error(`Template path escapes the project directory: ${relativePath}`);
+  }
+
+  const root = await lstat(directory);
+  if (root.isSymbolicLink()) {
+    throw new Error(`Template path uses a symlinked project directory: ${directory}`);
+  }
+
+  let current = directory;
+  for (const segment of relative(directory, destination).split(sep)) {
+    current = join(current, segment);
+    try {
+      const entry = await lstat(current);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Template path uses a symlink: ${relativePath}`);
+      }
+    } catch (error) {
+      if (isMissingDirectory(error)) break;
+      throw error;
+    }
   }
 }
 

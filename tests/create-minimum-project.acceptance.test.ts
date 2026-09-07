@@ -8,6 +8,7 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 
 import { featureCatalog } from "../src/catalog.js";
+import { evaluateGeneratedModule, parseWorkflow } from "./artifact-semantics.js";
 
 const executeFile = promisify(execFile);
 const feature = await loadFeature("features/create-minimum-project.feature");
@@ -96,7 +97,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "oxlint.config.ts", configuration);
+        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -166,7 +167,10 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
       And("GitHub Actions is included because secret scanning requires it", async () => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToContain(project, ".github/workflows/ci.yml", "gitleaks/gitleaks-action");
+        const workflow = parseWorkflow(
+          await readFile(join(project, ".github/workflows/ci.yml"), "utf8"),
+        );
+        expect(workflow.jobs.verify?.steps).toContainEqual({ uses: "gitleaks/gitleaks-action@v2" });
       });
 
       And("unselected optional features are absent", async () => {
@@ -279,7 +283,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "oxlint.config.ts", configuration);
+        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
   });
@@ -307,7 +311,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "oxlint.config.ts", configuration);
+        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -373,7 +377,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "oxlint.config.ts", configuration);
+        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
   });
@@ -402,7 +406,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "oxlint.config.ts", configuration);
+        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -456,7 +460,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "oxlint.config.ts", configuration);
+        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -465,7 +469,10 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       await expect(
         readFile(join(project, "tools/oxlint/anti-slop/effect/index.ts"), "utf8"),
       ).rejects.toThrow();
-      await expectFileNotToContain(project, "oxlint.config.ts", "anti-slop-effect");
+      const config = evaluateGeneratedModule<{ jsPlugins?: { name: string }[] }>(
+        await readFile(join(project, "oxlint.config.ts"), "utf8"),
+      );
+      expect(config.jsPlugins ?? []).not.toContainEqual({ name: "anti-slop-effect" });
     });
 
     And("the manifest records {string} as omitted", async (_context, feature: string) => {
@@ -628,9 +635,15 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         version: "9.8.7",
         description: "Human-authored metadata",
       });
+      const oxlint = evaluateGeneratedModule<{ rules: Record<string, string> }>(
+        await readFile(join(project, "oxlint.config.ts"), "utf8"),
+      );
+      const workflow = parseWorkflow(
+        await readFile(join(project, ".github/workflows/ci.yml"), "utf8"),
+      );
       await expectFileToContain(project, "src/existing.ts", "existing = true");
-      await expectFileToContain(project, "oxlint.config.ts", '"no-alert": "warn"');
-      await expectFileToContain(project, ".github/workflows/ci.yml", "build:");
+      expect(oxlint.rules).toEqual({ "no-alert": "warn" });
+      expect(workflow.jobs).toHaveProperty("build");
       await expectFileToContain(project, "README.md", "# Existing project");
     });
 
@@ -660,19 +673,26 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
     And("Oxlint configuration is merged by import, plugin, extension, and rule", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      const config = await readFile(join(project, "oxlint.config.ts"), "utf8");
-      expect(config).toContain('import core from "ultracite/oxlint/core";');
-      expect(config).toContain("extends: [core, antislop]");
-      expect(config).toContain('"no-alert": "warn"');
+      const config = evaluateGeneratedModule<{
+        extends: { id: string }[];
+        rules: Record<string, string>;
+      }>(await readFile(join(project, "oxlint.config.ts"), "utf8"));
+      expect(config.extends.map(({ id }) => id)).toEqual([
+        "ultracite-core",
+        "ultracite-anti-slop",
+      ]);
+      expect(config.rules).toEqual({ "no-alert": "warn" });
     });
 
     And("workflow configuration is merged by trigger, job, and step", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      const workflow = await readFile(join(project, ".github/workflows/ci.yml"), "utf8");
-      expect(workflow).toContain("pull_request:");
-      expect(workflow).toContain("branches: [develop, main]");
-      expect(workflow).toContain("verify:");
-      expect(workflow).toContain("actions/checkout@v4");
+      const workflow = parseWorkflow(
+        await readFile(join(project, ".github/workflows/ci.yml"), "utf8"),
+      );
+      expect(workflow.triggers).toEqual(
+        expect.objectContaining({ pull_request: {}, push: { branches: ["develop", "main"] } }),
+      );
+      expect(workflow.jobs.verify?.steps).toContainEqual({ uses: "actions/checkout@v4" });
     });
 
     And("agent-stack documentation is added in a managed Markdown block", async () => {
@@ -739,22 +759,38 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
     Then("both existing linter configurations are preserved", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      await expectFileToContain(project, "oxlint.config.ts", '"no-alert": "warn"');
-      await expectFileToContain(project, "eslint.config.mjs", "custom");
+      const oxlint = evaluateGeneratedModule<{ rules: Record<string, string> }>(
+        await readFile(join(project, "oxlint.config.ts"), "utf8"),
+      );
+      const eslint = evaluateGeneratedModule<{ id: string }[]>(
+        await readFile(join(project, "eslint.config.mjs"), "utf8"),
+      );
+      expect(oxlint.rules).toEqual({ "no-alert": "warn" });
+      expect(eslint).toContainEqual({ id: "custom-eslint" });
     });
 
     And("the selected Ultracite configuration is added to both linters", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      await expectFileToContain(project, "oxlint.config.ts", "ultracite/oxlint/core");
-      await expectFileToContain(project, "eslint.config.mjs", "ultracite/eslint/core");
+      const oxlint = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+        await readFile(join(project, "oxlint.config.ts"), "utf8"),
+      );
+      const eslint = evaluateGeneratedModule<{ id: string }[]>(
+        await readFile(join(project, "eslint.config.mjs"), "utf8"),
+      );
+      expect(oxlint.extends).toContainEqual(expect.objectContaining({ id: "ultracite-core" }));
+      expect(eslint).toContainEqual(expect.objectContaining({ id: "eslint-core" }));
     });
 
     And("neither linter configuration contains duplicate entries", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      const oxlint = await readFile(join(project, "oxlint.config.ts"), "utf8");
-      const eslint = await readFile(join(project, "eslint.config.mjs"), "utf8");
-      expect(oxlint.match(/ultracite\/oxlint\/core/g)).toHaveLength(1);
-      expect(eslint.match(/ultracite\/eslint\/core/g)).toHaveLength(1);
+      const oxlint = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+        await readFile(join(project, "oxlint.config.ts"), "utf8"),
+      );
+      const eslint = evaluateGeneratedModule<{ id: string }[]>(
+        await readFile(join(project, "eslint.config.mjs"), "utf8"),
+      );
+      expect(oxlint.extends.filter(({ id }) => id === "ultracite-core")).toHaveLength(1);
+      expect(eslint.filter(({ id }) => id === "eslint-core")).toHaveLength(1);
     });
   });
 
@@ -792,9 +828,13 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
 
     And("no configuration contains duplicate entries", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      const config = await readFile(join(project, "oxlint.config.ts"), "utf8");
-      expect(config.match(/ultracite\/oxlint\/core/g)).toHaveLength(1);
-      expect(config).not.toContain("agent-stack:start");
+      const config = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+        await readFile(join(project, "oxlint.config.ts"), "utf8"),
+      );
+      expect(config.extends.filter(({ id }) => id === "ultracite-core")).toHaveLength(1);
+      expect(await readFile(join(project, "oxlint.config.ts"), "utf8")).not.toContain(
+        "agent-stack:start",
+      );
     });
   });
 
@@ -933,13 +973,13 @@ async function expectFileToEqual(project: string, path: string, expected: string
   expect(normalize(actual)).toBe(normalize(expected));
 }
 
-async function expectFileNotToContain(
+async function expectTypeScriptModuleToEqual(
   project: string,
   path: string,
-  unexpected: string,
+  expected: string,
 ): Promise<void> {
-  const content = await readFile(join(project, path), "utf8");
-  expect(content).not.toContain(unexpected);
+  const actual = evaluateGeneratedModule(await readFile(join(project, path), "utf8"));
+  expect(actual).toEqual(evaluateGeneratedModule(expected));
 }
 
 async function expectFiles(project: string, paths: readonly string[]): Promise<void> {
