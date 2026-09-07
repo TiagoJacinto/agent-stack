@@ -258,8 +258,8 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
   let merged = imports.content;
   if (/export default\s+[^;]*\bcore\b/.test(merged)) return reconciled(merged);
 
-  const exportMatch = /export default\s+(\[[\s\S]*?\]|[^;\n]+)\s*;?/.exec(merged);
-  if (exportMatch === null) {
+  const exportExpression = defaultExportExpression(merged);
+  if (exportExpression === undefined) {
     return {
       content: existingContent,
       changed: false,
@@ -267,7 +267,7 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
     };
   }
 
-  const expression = exportMatch[1]?.trim() ?? "";
+  const expression = exportExpression.expression;
   let replacement: string;
   if (expression.startsWith("[")) {
     const entries = expression.slice(1, -1).trim();
@@ -276,7 +276,10 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
   } else {
     replacement = `[${expression}, core]`;
   }
-  merged = merged.replace(exportMatch[0], `export default ${replacement};`);
+  merged =
+    merged.slice(0, exportExpression.start) +
+    `export default ${replacement};` +
+    merged.slice(exportExpression.end);
   return reconciled(merged);
 }
 
@@ -313,6 +316,13 @@ function mergeObjectConfig(existingContent: string, generatedContent: string): R
     return { content: existingContent, changed: false, conflicts: imports.conflicts };
   }
   let merged = imports.content;
+  if (configObjectOpen(merged) < 0) {
+    return {
+      content: existingContent,
+      changed: false,
+      conflicts: ["stryker.config.mjs:export default"],
+    };
+  }
   const conflicts: string[] = [];
   for (const property of ["plugins", "reporters", "mutate"]) {
     const entries = arrayEntries(generatedContent, property);
@@ -834,6 +844,42 @@ function configObjectOpen(content: string): number {
   const defaultObject = content.indexOf("export default {");
   if (defaultObject >= 0) return defaultObject + "export default ".length;
   return -1;
+}
+
+type DefaultExportExpression = {
+  readonly start: number;
+  readonly end: number;
+  readonly expression: string;
+};
+
+function defaultExportExpression(content: string): DefaultExportExpression | undefined {
+  const exportMatch = /export\s+default\s+/.exec(content);
+  if (exportMatch === null) return undefined;
+  const expressionStart = exportMatch.index + exportMatch[0].length;
+  let cursor = expressionStart;
+  while (/\s/.test(content[cursor] ?? "")) cursor += 1;
+
+  const firstCharacter = content[cursor];
+  if (firstCharacter === "[" || firstCharacter === "{") {
+    const close = matchingDelimiter(content, cursor, firstCharacter, firstCharacter === "[" ? "]" : "}");
+    if (close < 0) return undefined;
+    const end = content[close + 1] === ";" ? close + 2 : close + 1;
+    return {
+      start: exportMatch.index,
+      end,
+      expression: content.slice(cursor, close + 1),
+    };
+  }
+
+  const semicolon = content.indexOf(";", cursor);
+  const newline = content.indexOf("\n", cursor);
+  const expressionEnd =
+    semicolon < 0 ? (newline < 0 ? content.length : newline) : semicolon;
+  return {
+    start: exportMatch.index,
+    end: semicolon < 0 ? expressionEnd : semicolon + 1,
+    expression: content.slice(cursor, expressionEnd).trim(),
+  };
 }
 
 function insertConfigProperty(content: string, property: string): string {

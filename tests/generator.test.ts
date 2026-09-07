@@ -272,6 +272,28 @@ describe("generateProject", () => {
     expect(eslint.map(({ id }) => id)).toEqual(["custom-eslint", "eslint-core"]);
   });
 
+  it("preserves a multiline ESLint object export", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "eslint.config.mjs"),
+      'export default {\n  rules: { "no-alert": "warn" },\n};\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["eslint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<
+      { rules: Record<string, string> }[]
+    >(await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"));
+    expect(config).toEqual([
+      { rules: { "no-alert": "warn" } },
+      { id: "eslint-core" },
+    ]);
+  });
+
   it("reports a scalar linter array collision before writing", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
@@ -321,6 +343,23 @@ describe("generateProject", () => {
     }>(await readFile(join(targetDirectory, "vitest.config.ts"), "utf8"));
     expect(config.coverage.include).toEqual(["coverage/**/*.ts"]);
     expect(config.test.include).toEqual(["tests/**/*.test.ts"]);
+  });
+
+  it("reports an aliased Stryker export before writing", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "stryker.config.mjs"),
+      'const config = { testRunner: "vitest" };\nexport default config;\n',
+      "utf8",
+    );
+
+    await expect(
+      mergeProject({
+        targetDirectory,
+        selection: createFeatureSelection(["mutation-testing"]),
+      }),
+    ).rejects.toThrow("stryker.config.mjs:export default");
+    await expect(readFile(join(targetDirectory, "package.json"), "utf8")).rejects.toThrow();
   });
 
   it("merges block-style workflow branches", async () => {
