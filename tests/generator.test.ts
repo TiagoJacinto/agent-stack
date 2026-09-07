@@ -382,6 +382,25 @@ describe("generateProject", () => {
     expect(config.extends.map(({ id }) => id)).toEqual(["ultracite-core"]);
   });
 
+  it("recognizes imports with trailing comments", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint"; // keep\n\nexport default defineConfig({});\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+      await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"),
+    );
+    expect(config.extends.map(({ id }) => id)).toEqual(["ultracite-core"]);
+  });
+
   it("merges quoted configuration keys", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
@@ -440,6 +459,22 @@ describe("generateProject", () => {
     await writeFile(
       join(targetDirectory, "vitest.config.ts"),
       'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  test: { include: ["tests/**/*.spec.ts", // keep\n  ] },\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({ targetDirectory, selection: createFeatureSelection(["vitest"]) });
+
+    const config = evaluateGeneratedModule<{ test: { include: string[] } }>(
+      await readFile(join(targetDirectory, "vitest.config.ts"), "utf8"),
+    );
+    expect(config.test.include).toEqual(["tests/**/*.spec.ts", "tests/**/*.test.ts"]);
+  });
+
+  it("merges an array with a trailing comment", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "vitest.config.ts"),
+      'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  test: { include: ["tests/**/*.spec.ts"] // keep\n  },\n});\n',
       "utf8",
     );
 
@@ -534,6 +569,26 @@ describe("generateProject", () => {
     expect(config[1].id).toBe("eslint-core");
   });
 
+  it("does not mistake a rules token for the ESLint core config", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "eslint.config.mjs"),
+      'export default [{ rules: { core: "off" } }];\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["eslint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{ rules: { core: string } }[]>(
+      await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"),
+    );
+    expect(config[0]?.rules.core).toBe("off");
+    expect(config[1]).toEqual({ id: "eslint-core" });
+  });
+
   it("normalizes inline workflow triggers with comments", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
@@ -561,7 +616,7 @@ describe("generateProject", () => {
     await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
     await writeFile(
       join(targetDirectory, ".github/workflows/ci.yml"),
-      "name: Existing CI\n\non: { push: {} }\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+      "name: Existing CI\n\non: { push: { branches: [develop] } }\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
       "utf8",
     );
 
@@ -573,7 +628,30 @@ describe("generateProject", () => {
     const workflow = parseWorkflow(
       await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
     );
-    expect(workflow.triggers.push).toEqual({ branches: ["main"] });
+    expect(workflow.triggers.push).toEqual({ branches: ["develop", "main"] });
+  });
+
+  it("merges generated steps into inline empty workflow steps", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
+    await writeFile(
+      join(targetDirectory, ".github/workflows/ci.yml"),
+      "name: Existing CI\n\non:\n  push:\n\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps: []\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["github-actions"]),
+    });
+
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.jobs.verify?.steps).toEqual(
+      expect.arrayContaining([{ uses: "actions/checkout@v4" }]),
+    );
+    expect(workflow.jobs.build?.steps).toEqual([{ run: "echo build" }]);
   });
 
   it("deduplicates quoted workflow branches", async () => {
@@ -581,7 +659,7 @@ describe("generateProject", () => {
     await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
     await writeFile(
       join(targetDirectory, ".github/workflows/ci.yml"),
-      'name: Existing CI\n\non:\n  push:\n    branches: ["main"]\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n',
+      'name: Existing CI\n\non:\n  push:\n    branches: ["main"] # keep\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n',
       "utf8",
     );
 
@@ -615,6 +693,50 @@ describe("generateProject", () => {
     }>(await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"));
     expect(config.jsPlugins.map(({ name }) => name)).toEqual(["anti-slop"]);
     expect(config.overrides[0]?.jsPlugins).toEqual([]);
+  });
+
+  it("adds top-level ignore patterns beside nested settings", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\n\nexport default defineConfig({\n  overrides: [{ ignorePatterns: ["custom/**"] }],\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{
+      ignorePatterns: string[];
+      overrides: { ignorePatterns: string[] }[];
+    }>(await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"));
+    expect(config.ignorePatterns).toEqual(["node_modules"]);
+    expect(config.overrides[0]?.ignorePatterns).toEqual(["custom/**"]);
+  });
+
+  it("inserts configuration after comments containing braces", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\n\nexport default defineConfig({\n  rules: { "no-alert": "warn" } // } keep\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{
+      extends: { id: string }[];
+      rules: Record<string, string>;
+      ignorePatterns: string[];
+    }>(await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"));
+    expect(config.rules).toEqual({ "no-alert": "warn" });
+    expect(config.extends.map(({ id }) => id)).toEqual(["ultracite-core"]);
+    expect(config.ignorePatterns).toEqual(["node_modules"]);
   });
 
   it("preserves trailing comments in ESLint exports", async () => {

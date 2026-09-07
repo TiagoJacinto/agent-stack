@@ -236,7 +236,10 @@ function mergeOxlintConfig(existingContent: string, generatedContent: string): R
   if (generatedPlugins.length > 0) merged = mergePlugins(merged, generatedPlugins);
 
   const generatedIgnorePatterns = propertyLine(generatedContent, "ignorePatterns");
-  if (generatedIgnorePatterns !== undefined && !hasProperty(merged, "ignorePatterns")) {
+  if (
+    generatedIgnorePatterns !== undefined &&
+    topLevelProperty(merged, configObjectOpen(merged), "ignorePatterns") === undefined
+  ) {
     merged = insertConfigProperty(merged, generatedIgnorePatterns);
   }
 
@@ -256,7 +259,6 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
     return { content: existingContent, changed: false, conflicts: imports.conflicts };
   }
   let merged = imports.content;
-  if (/export default\s+[^;]*\bcore\b/.test(merged)) return reconciled(merged);
 
   const exportExpression = defaultExportExpression(merged);
   if (exportExpression === undefined) {
@@ -268,6 +270,19 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
   }
 
   const expression = exportExpression.expression;
+  const hasGeneratedCoreImport = importLines(merged).some((line) =>
+    importBindings(line).some(
+      (binding) => binding.local === "core" && binding.source === "ultracite/eslint/core",
+    ),
+  );
+  if (
+    hasGeneratedCoreImport &&
+    (expression.trim() === "core" ||
+      (expression.startsWith("[") &&
+        arrayValueEntries(expression).some((entry) => entry.trim() === "core")))
+  ) {
+    return reconciled(merged);
+  }
   let replacement: string;
   if (expression.startsWith("[")) {
     const entries = expression.slice(1, -1).trim();
@@ -380,36 +395,140 @@ function normalizeFlowWorkflowTriggers(lines: string[], section: YamlSection): s
   const match = /^(\s*)on:\s*(.*)$/.exec(line);
   if (match === null) return lines;
   const inlineValue = (match[2] ?? "").trim();
-  const commentStart = inlineValue.indexOf("#");
+  const commentStart = yamlCommentStart(inlineValue);
   const value = (commentStart < 0 ? inlineValue : inlineValue.slice(0, commentStart)).trim();
   const comment = commentStart < 0 ? "" : ` ${inlineValue.slice(commentStart).trim()}`;
-  const triggers = inlineWorkflowTriggerNames(value);
+  const triggers = inlineWorkflowTriggers(value);
   if (triggers.length === 0 && value.length === 0) return lines;
   const indentation = match[1] ?? "";
   const replacement = [
     `${indentation}on:`,
-    ...triggers.map(
-      (trigger, index) => `${indentation}  ${trigger}:${index === 0 ? comment : ""}`,
-    ),
+    ...triggers.flatMap(({ name, branches }, index) => [
+      `${indentation}  ${name}:${index === 0 ? comment : ""}`,
+      ...(branches === undefined ? [] : [`${indentation}    branches: ${branches}`]),
+    ]),
   ];
   lines.splice(section.start, section.end - section.start, ...replacement);
   return lines;
 }
 
-function inlineWorkflowTriggerNames(value: string): string[] {
+type InlineWorkflowTrigger = {
+  readonly name: string;
+  readonly branches?: string;
+};
+
+function inlineWorkflowTriggers(value: string): InlineWorkflowTrigger[] {
   if (value.startsWith("[") && value.endsWith("]")) {
     return value
       .slice(1, -1)
       .split(",")
-      .map((trigger) => normalizeYamlScalar(trigger))
+      .map((trigger) => ({ name: normalizeYamlScalar(trigger) }))
       .filter(Boolean);
   }
   if (value.startsWith("{") && value.endsWith("}")) {
-    return [...value.slice(1, -1).matchAll(/(?:^|,)\s*(?:(["'])(.*?)\1|([\w-]+))\s*:/g)]
-      .map((match) => match[2] ?? match[3] ?? "")
-      .filter(Boolean);
+    return splitInlineYamlEntries(value.slice(1, -1)).flatMap((entry) => {
+      const separator = inlineYamlColon(entry);
+      if (separator < 0) return [];
+      const name = normalizeYamlScalar(entry.slice(0, separator));
+      if (name.length === 0) return [];
+      const configuration = entry.slice(separator + 1).trim();
+      const branches = inlineYamlProperty(configuration, "branches");
+      return [{ name, ...(branches === undefined ? {} : { branches }) }];
+    });
   }
-  return [normalizeYamlScalar(value)].filter(Boolean);
+  const name = normalizeYamlScalar(value);
+  return name.length === 0 ? [] : [{ name }];
+}
+
+function splitInlineYamlEntries(value: string): string[] {
+  const entries: string[] = [];
+  let start = 0;
+  let curlyDepth = 0;
+  let bracketDepth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") curlyDepth += 1;
+    if (character === "}") curlyDepth -= 1;
+    if (character === "[") bracketDepth += 1;
+    if (character === "]") bracketDepth -= 1;
+    if (character === "," && curlyDepth === 0 && bracketDepth === 0) {
+      entries.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  const last = value.slice(start).trim();
+  if (last.length > 0) entries.push(last);
+  return entries;
+}
+
+function inlineYamlColon(value: string): number {
+  let curlyDepth = 0;
+  let bracketDepth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") curlyDepth += 1;
+    if (character === "}") curlyDepth -= 1;
+    if (character === "[") bracketDepth += 1;
+    if (character === "]") bracketDepth -= 1;
+    if (character === ":" && curlyDepth === 0 && bracketDepth === 0) return index;
+  }
+  return -1;
+}
+
+function inlineYamlProperty(value: string, property: string): string | undefined {
+  if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
+  for (const entry of splitInlineYamlEntries(value.slice(1, -1))) {
+    const separator = inlineYamlColon(entry);
+    if (separator < 0) continue;
+    if (normalizeYamlScalar(entry.slice(0, separator)) === property) {
+      return entry.slice(separator + 1).trim();
+    }
+  }
+  return undefined;
+}
+
+function yamlCommentStart(value: string): number {
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "#") return index;
+  }
+  return -1;
 }
 
 type YamlSection = {
@@ -485,6 +604,7 @@ type YamlBranches = {
   readonly end: number;
   readonly indentation: string;
   readonly branches: readonly string[];
+  readonly comment: string;
   readonly style: "flow" | "block";
 };
 
@@ -494,7 +614,10 @@ function yamlBranches(content: string): YamlBranches | undefined {
     const match = /^(\s*)branches:\s*(.*)$/.exec(lines[index] ?? "");
     if (match === null) continue;
     const indentation = match[1] ?? "";
-    const value = match[2] ?? "";
+    const rawValue = match[2] ?? "";
+    const commentStart = yamlCommentStart(rawValue);
+    const value = (commentStart < 0 ? rawValue : rawValue.slice(0, commentStart)).trim();
+    const comment = commentStart < 0 ? "" : ` ${rawValue.slice(commentStart).trim()}`;
     if (value.startsWith("[") && value.endsWith("]")) {
       return {
         start: index,
@@ -506,6 +629,7 @@ function yamlBranches(content: string): YamlBranches | undefined {
           .map((branch) => normalizeYamlScalar(branch))
           .filter(Boolean),
         style: "flow",
+        comment,
       };
     }
     if (value.length > 0) continue;
@@ -516,7 +640,7 @@ function yamlBranches(content: string): YamlBranches | undefined {
       if (branch === null || (branch[1]?.length ?? 0) <= indentation.length) break;
       branches.push(normalizeYamlScalar(branch[2] ?? ""));
     }
-    return { start: index, end, indentation, branches, style: "block" };
+    return { start: index, end, indentation, branches, style: "block", comment: "" };
   }
   return undefined;
 }
@@ -567,7 +691,7 @@ function mergeWorkflowBranches(
     mergedPush.splice(
       existingBranches.start,
       1,
-      `${existingBranches.indentation}branches: [${branches.join(", ")}]`,
+      `${existingBranches.indentation}branches: [${branches.join(", ")}]${existingBranches.comment}`,
     );
   } else {
     mergedPush.splice(
@@ -589,7 +713,7 @@ function mergeWorkflowSteps(
 ): string[] {
   const jobStart = jobsSection.start + existingJob.start;
   const jobEnd = jobsSection.start + existingJob.end;
-  const existingJobLines = lines.slice(jobStart, jobEnd);
+  let existingJobLines = lines.slice(jobStart, jobEnd);
   const generatedSteps = yamlSections(generatedJob.block, 4).find(
     (section) => section.name === "steps",
   );
@@ -601,6 +725,14 @@ function mergeWorkflowSteps(
   if (existingSteps === undefined) {
     lines.splice(jobEnd, 0, ...generatedSteps.block.split("\n"), "");
     return lines;
+  }
+
+  const existingStepsLine = existingJobLines[existingSteps.start] ?? "";
+  const flowSteps = /^\s*steps:\s*\[\s*\]\s*$/.test(existingStepsLine);
+  if (flowSteps) {
+    const globalStepsStart = jobStart + existingSteps.start;
+    lines.splice(globalStepsStart, 1, `${existingStepsLine.match(/^\s*/)?.[0] ?? ""}steps:`);
+    existingJobLines = lines.slice(jobStart, jobEnd);
   }
 
   const existingIdentities = new Set(
@@ -623,7 +755,9 @@ function mergeWorkflowSteps(
     index = end - 1;
   }
   if (missingSteps.length === 0) return lines;
-  const insertion = jobsSection.start + existingJob.start + existingSteps.end;
+  const insertion = flowSteps
+    ? jobStart + existingSteps.start + 1
+    : jobsSection.start + existingJob.start + existingSteps.end;
   lines.splice(insertion, 0, ...missingSteps);
   return lines;
 }
@@ -690,8 +824,8 @@ function importLines(content: string): string[] {
 
 function isCompleteImport(statement: string): boolean {
   return (
-    /\bfrom\s+["'][^"']+["']\s*;?\s*$/.test(statement) ||
-    /^import\s+["'][^"']+["']\s*;?\s*$/.test(statement)
+    /\bfrom\s+["'][^"']+["']\s*;?(?:\s*\/\/.*)?\s*$/.test(statement) ||
+    /^import\s+["'][^"']+["']\s*;?(?:\s*\/\/.*)?\s*$/.test(statement)
   );
 }
 
@@ -790,6 +924,7 @@ function mergeArrayProperty(
 type PropertyLocation = {
   readonly start: number;
   readonly end: number;
+  readonly valueStart: number;
   readonly value: string;
 };
 
@@ -816,7 +951,12 @@ function topLevelProperty(
     const valueStart = cursor + keyMatch[0].length;
     const valueEnd = expressionEnd(content, valueStart, objectClose);
     if (key === property) {
-      return { start: cursor, end: valueEnd, value: content.slice(valueStart, valueEnd) };
+      return {
+        start: cursor,
+        end: valueEnd,
+        valueStart,
+        value: content.slice(valueStart, valueEnd),
+      };
     }
     cursor = valueEnd < objectClose ? valueEnd + 1 : objectClose;
   }
@@ -829,8 +969,19 @@ function expressionEnd(content: string, start: number, limit: number): number {
   let parenDepth = 0;
   let quote = "";
   let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
   for (let index = start; index < limit; index += 1) {
     const character = content[index];
+    const nextCharacter = content[index + 1];
+    if (lineComment) {
+      if (character === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && nextCharacter === "/") blockComment = false;
+      continue;
+    }
     if (quote.length > 0) {
       if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
@@ -839,6 +990,16 @@ function expressionEnd(content: string, start: number, limit: number): number {
     }
     if (character === '"' || character === "'" || character === "`") {
       quote = character;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "/") {
+      if (curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) return index;
+      lineComment = true;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "*") {
+      if (curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) return index;
+      blockComment = true;
       continue;
     }
     if (character === "{") curlyDepth += 1;
@@ -1197,6 +1358,7 @@ function insertPropertyAt(content: string, openBrace: number, property: string):
   if (closeBrace < 0) return content;
   const body = content.slice(openBrace + 1, closeBrace);
   const trimmedBody = body.trimEnd();
+  const safeBody = moveTrailingComment(trimmedBody);
   const closeLineStart = content.lastIndexOf("\n", closeBrace) + 1;
   const closeIndent = content.slice(closeLineStart, closeBrace).match(/^\s*/)?.[0] ?? "";
   const propertyIndent = `${closeIndent}  `;
@@ -1204,17 +1366,35 @@ function insertPropertyAt(content: string, openBrace: number, property: string):
     .split("\n")
     .map((line) => `${propertyIndent}${line.trim()}`)
     .join("\n");
-  const separator = trimmedBody.length === 0 ? "" : trimmedBody.endsWith(",") ? "" : ",";
-  const prefix = content.slice(0, openBrace + 1) + trimmedBody + separator + "\n";
+  const trailingLine = safeBody.slice(safeBody.lastIndexOf("\n") + 1);
+  const separator =
+    safeBody.length === 0 ||
+    safeBody.endsWith(",") ||
+    arrayCommentStart(trailingLine) >= 0
+      ? ""
+      : ",";
+  const prefix = content.slice(0, openBrace + 1) + safeBody + separator + "\n";
   return `${prefix}${normalizedProperty}\n${closeIndent}${content.slice(closeBrace)}`;
 }
 
+function moveTrailingComment(body: string): string {
+  const lineStart = body.lastIndexOf("\n") + 1;
+  const line = body.slice(lineStart);
+  const commentOffset = arrayCommentStart(line);
+  if (commentOffset < 0) return body;
+  const commentStart = lineStart + commentOffset;
+  const code = body.slice(0, commentStart).trimEnd();
+  const indentation = line.match(/^\s*/)?.[0] ?? "";
+  const separator = code.length === 0 || code.endsWith(",") ? "" : ",";
+  return `${code}${separator}\n${indentation}${body.slice(commentStart).trimStart()}`;
+}
+
 function propertyObjectOpen(content: string, property: string): number | undefined {
-  const escapedProperty = escapeRegExp(property);
-  const match = new RegExp(
-    `(?:${escapedProperty}|["']${escapedProperty}["'])\\s*:\\s*\\{`,
-  ).exec(content);
-  return match === null ? undefined : content.indexOf("{", match.index);
+  const propertyLocation = topLevelProperty(content, configObjectOpen(content), property);
+  if (propertyLocation === undefined) return undefined;
+  let valueStart = propertyLocation.valueStart;
+  while (/\s/.test(content[valueStart] ?? "")) valueStart += 1;
+  return content[valueStart] === "{" ? valueStart : undefined;
 }
 
 function matchingDelimiter(
@@ -1226,8 +1406,19 @@ function matchingDelimiter(
   let depth = 0;
   let quote = "";
   let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
   for (let index = open; index < content.length; index += 1) {
     const character = content[index];
+    const nextCharacter = content[index + 1];
+    if (lineComment) {
+      if (character === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && nextCharacter === "/") blockComment = false;
+      continue;
+    }
     if (quote.length > 0) {
       if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
@@ -1236,6 +1427,14 @@ function matchingDelimiter(
     }
     if (character === '"' || character === "'" || character === "`") {
       quote = character;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "/") {
+      lineComment = true;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "*") {
+      blockComment = true;
       continue;
     }
     if (character === openChar) depth += 1;

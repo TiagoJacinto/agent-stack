@@ -138,10 +138,31 @@ function yamlEntry(value: string): { readonly key: string; readonly value: strin
 }
 
 function flowArray(value: string): readonly string[] {
-  if (!value.startsWith("[") || !value.endsWith("]")) return [];
-  return value
+  const withoutComment = yamlValueWithoutComment(value);
+  if (!withoutComment.startsWith("[") || !withoutComment.endsWith("]")) return [];
+  return withoutComment
     .slice(1, -1)
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+function yamlValueWithoutComment(value: string): string {
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "#") return value.slice(0, index).trimEnd();
+  }
+  return value.trim();
 }
