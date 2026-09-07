@@ -1,0 +1,674 @@
+export interface Reconciliation {
+  readonly content: string;
+  readonly changed: boolean;
+  readonly conflicts: readonly string[];
+}
+
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type JsonObject = { [key: string]: JsonValue };
+
+const markdownStart = "<!-- agent-stack:start -->";
+const markdownEnd = "<!-- agent-stack:end -->";
+
+export function prepareNewFile(relativePath: string, generatedContent: string): string {
+  if (relativePath === "package.json") return mergePackageJson("{}", generatedContent);
+  if (relativePath.endsWith(".md")) return mergeMarkdown("", generatedContent);
+  return generatedContent;
+}
+
+export function reconcileFile(
+  relativePath: string,
+  existingContent: string,
+  generatedContent: string,
+): Reconciliation {
+  if (existingContent === generatedContent) {
+    return { content: existingContent, changed: false, conflicts: [] };
+  }
+
+  if (relativePath === "package.json") {
+    return reconciled(mergePackageJson(existingContent, generatedContent));
+  }
+  if (relativePath === "tsconfig.json" || relativePath === "tsconfig.build.json") {
+    return mergeJsonFile(relativePath, existingContent, generatedContent);
+  }
+  if (relativePath === ".agent-stack/manifest.json") {
+    return reconciled(mergeManifest(existingContent, generatedContent));
+  }
+  if (relativePath === ".agent-stack/progress.json") {
+    return reconciled(mergePreservingExisting(existingContent, generatedContent));
+  }
+  if (relativePath === ".gitignore") {
+    return reconciled(mergeGitignore(existingContent, generatedContent));
+  }
+  if (relativePath.endsWith(".md")) {
+    return reconciled(mergeMarkdown(existingContent, generatedContent));
+  }
+  if (relativePath === "oxlint.config.ts") {
+    return mergeOxlintConfig(existingContent, generatedContent);
+  }
+  if (relativePath === "eslint.config.mjs") {
+    return mergeEslintConfig(existingContent, generatedContent);
+  }
+  if (relativePath === "vitest.config.ts") {
+    return mergeVitestConfig(existingContent, generatedContent);
+  }
+  if (relativePath === "stryker.config.mjs") {
+    return reconciled(mergeObjectConfig(existingContent, generatedContent));
+  }
+  if (relativePath === ".github/workflows/ci.yml") {
+    return reconciled(mergeWorkflow(existingContent, generatedContent));
+  }
+
+  return {
+    content: existingContent,
+    changed: false,
+    conflicts: [relativePath],
+  };
+}
+
+function reconciled(content: string): Reconciliation {
+  return { content, changed: true, conflicts: [] };
+}
+
+function mergeJsonFile(
+  relativePath: string,
+  existingContent: string,
+  generatedContent: string,
+): Reconciliation {
+  const existing = parseJsonObject(relativePath, existingContent);
+  const generated = parseJsonObject(relativePath, generatedContent);
+  const conflicts: string[] = [];
+  const merged = mergeJsonValue(existing, generated, relativePath, conflicts);
+
+  return {
+    content: `${JSON.stringify(merged, null, 2)}\n`,
+    changed: conflicts.length === 0,
+    conflicts,
+  };
+}
+
+function parseJsonObject(relativePath: string, content: string): JsonObject {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (!isJsonObject(parsed)) throw new Error("the root value is not an object");
+    return parsed;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot merge ${relativePath}: ${detail}`);
+  }
+}
+
+function mergeJsonValue(
+  existing: JsonValue,
+  generated: JsonValue,
+  path: string,
+  conflicts: string[],
+): JsonValue {
+  if (isJsonObject(existing) && isJsonObject(generated)) {
+    const merged: JsonObject = { ...generated };
+    for (const [key, existingValue] of Object.entries(existing)) {
+      const generatedValue = generated[key];
+      merged[key] =
+        generatedValue === undefined
+          ? existingValue
+          : mergeJsonValue(existingValue, generatedValue, `${path}.${key}`, conflicts);
+    }
+    return merged;
+  }
+
+  if (Array.isArray(existing) && Array.isArray(generated)) {
+    return uniqueJsonValues([...generated, ...existing]);
+  }
+
+  if (Object.is(existing, generated)) return existing;
+  conflicts.push(path);
+  return existing;
+}
+
+function mergePackageJson(existingContent: string, generatedContent: string): string {
+  const existing = parseJsonObject("package.json", existingContent);
+  const generated = parseJsonObject("package.json", generatedContent);
+  const merged: JsonObject = { ...generated, ...existing };
+
+  for (const key of ["scripts", "dependencies", "devDependencies"]) {
+    merged[key] = mergePreservingExistingValue(generated[key], existing[key]);
+  }
+
+  const scripts = asJsonObject(merged.scripts);
+  if (scripts.test === "vitest run") scripts.test = "vitest run --passWithNoTests";
+
+  return `${JSON.stringify(merged, null, 2)}\n`;
+}
+
+function mergeManifest(existingContent: string, generatedContent: string): string {
+  const existing = parseJsonObject(".agent-stack/manifest.json", existingContent);
+  const generated = parseJsonObject(".agent-stack/manifest.json", generatedContent);
+  const merged: JsonObject = { ...generated, ...existing };
+  merged.features = uniqueJsonValues([
+    ...asJsonArray(generated.features),
+    ...asJsonArray(existing.features),
+  ]);
+
+  if (isJsonObject(generated.selection) && isJsonObject(existing.selection)) {
+    const selection: JsonObject = { ...generated.selection, ...existing.selection };
+    selection.resolved = uniqueJsonValues([
+      ...asJsonArray(generated.selection.resolved),
+      ...asJsonArray(existing.selection.resolved),
+    ]);
+    merged.selection = selection;
+  }
+
+  if (existing.preset === undefined && generated.preset !== undefined) {
+    merged.preset = generated.preset;
+  }
+
+  return `${JSON.stringify(merged, null, 2)}\n`;
+}
+
+function mergePreservingExisting(existingContent: string, generatedContent: string): string {
+  const existing = parseJsonObject("JSON artifact", existingContent);
+  const generated = parseJsonObject("JSON artifact", generatedContent);
+  return `${JSON.stringify(mergePreservingExistingValue(generated, existing), null, 2)}\n`;
+}
+
+function mergePreservingExistingValue(
+  generated: JsonValue | undefined,
+  existing: JsonValue | undefined,
+): JsonValue {
+  if (generated === undefined) return existing ?? null;
+  if (existing === undefined) return generated;
+  if (isJsonObject(generated) && isJsonObject(existing)) {
+    const merged: JsonObject = { ...generated, ...existing };
+    for (const [key, generatedValue] of Object.entries(generated)) {
+      merged[key] = mergePreservingExistingValue(generatedValue, existing[key]);
+    }
+    return merged;
+  }
+  if (Array.isArray(generated) && Array.isArray(existing)) {
+    return uniqueJsonValues([...generated, ...existing]);
+  }
+  return existing;
+}
+
+function mergeGitignore(existingContent: string, generatedContent: string): string {
+  const existingLines = existingContent.split(/\r?\n/).filter((line) => line.length > 0);
+  const existingSet = new Set(existingLines);
+  const additions = generatedContent
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0 && !existingSet.has(line));
+  return `${[...existingLines, ...additions].join("\n")}\n`;
+}
+
+function mergeMarkdown(existingContent: string, generatedContent: string): string {
+  const block = `${markdownStart}\n${generatedContent.trim()}\n${markdownEnd}`;
+  const managedBlock = new RegExp(
+    `${escapeRegExp(markdownStart)}[\\s\\S]*?${escapeRegExp(markdownEnd)}`,
+  );
+  if (managedBlock.test(existingContent)) return existingContent.replace(managedBlock, block);
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
+}
+
+function mergeOxlintConfig(existingContent: string, generatedContent: string): Reconciliation {
+  let merged = mergeImports(existingContent, generatedContent);
+  if (!existingContent.includes("defineConfig(")) {
+    merged = merged.replace(/^import \{ defineConfig \} from "oxlint";\n?/m, "");
+  }
+  const generatedExtends = arrayEntries(generatedContent, "extends");
+  if (generatedExtends.length > 0) merged = mergeArrayProperty(merged, "extends", generatedExtends);
+
+  const generatedPlugins = pluginEntries(generatedContent);
+  if (generatedPlugins.length > 0) merged = mergePlugins(merged, generatedPlugins);
+
+  const generatedIgnorePatterns = propertyLine(generatedContent, "ignorePatterns");
+  if (generatedIgnorePatterns !== undefined && !hasProperty(merged, "ignorePatterns")) {
+    merged = insertConfigProperty(merged, generatedIgnorePatterns);
+  }
+
+  if (!hasConfigObject(merged)) {
+    return { content: existingContent, changed: false, conflicts: ["oxlint.config.ts"] };
+  }
+  return reconciled(merged);
+}
+
+function mergeEslintConfig(existingContent: string, generatedContent: string): Reconciliation {
+  const generatedImports = importLines(generatedContent);
+  if (generatedImports.length === 0)
+    return { content: existingContent, changed: false, conflicts: [] };
+
+  let merged = mergeImports(existingContent, generatedContent);
+  if (/export default\s+[^;]*\bcore\b/.test(merged)) return reconciled(merged);
+
+  const exportMatch = /export default\s+(\[[\s\S]*?\]|[^;\n]+)\s*;?/.exec(merged);
+  if (exportMatch === null) {
+    return {
+      content: existingContent,
+      changed: false,
+      conflicts: ["eslint.config.mjs:export default"],
+    };
+  }
+
+  const expression = exportMatch[1]?.trim() ?? "";
+  let replacement: string;
+  if (expression.startsWith("[")) {
+    const entries = expression.slice(1, -1).trim();
+    replacement =
+      entries.length === 0 ? "[core]" : `[${entries}${entries.endsWith(",") ? "" : ","} core]`;
+  } else {
+    replacement = `[${expression}, core]`;
+  }
+  merged = merged.replace(exportMatch[0], `export default ${replacement};`);
+  return reconciled(merged);
+}
+
+function mergeVitestConfig(existingContent: string, generatedContent: string): Reconciliation {
+  let merged = mergeImports(existingContent, generatedContent);
+  const generatedInclude = arrayEntries(generatedContent, "include");
+  if (generatedInclude.length > 0) {
+    if (hasProperty(merged, "include")) {
+      merged = mergeArrayProperty(merged, "include", generatedInclude);
+    } else {
+      const testObject = propertyObjectOpen(merged, "test");
+      if (testObject === undefined) {
+        return { content: existingContent, changed: false, conflicts: ["vitest.config.ts:test"] };
+      }
+      merged = insertPropertyAt(
+        merged,
+        testObject,
+        `include: [${generatedInclude.map((entry) => JSON.stringify(entry)).join(", ")}]`,
+      );
+    }
+  }
+  return reconciled(merged);
+}
+
+function mergeObjectConfig(existingContent: string, generatedContent: string): string {
+  let merged = mergeImports(existingContent, generatedContent);
+  for (const property of ["plugins", "reporters", "mutate"]) {
+    const entries = arrayEntries(generatedContent, property);
+    if (entries.length > 0) merged = mergeArrayProperty(merged, property, entries);
+  }
+  for (const line of generatedContent.split("\n")) {
+    const match = /^\s{2}([A-Za-z][\w]*):\s*(.+),?$/.exec(line);
+    if (match !== null && !hasProperty(merged, match[1] ?? "")) {
+      merged = insertConfigProperty(merged, line.trimEnd());
+    }
+  }
+  return merged;
+}
+
+function mergeWorkflow(existingContent: string, generatedContent: string): string {
+  let lines = existingContent.split("\n");
+  for (const section of yamlSections(generatedContent, 0)) {
+    if (section.name === "name") continue;
+    const existingSection = yamlSections(lines.join("\n"), 0).find(
+      (candidate) => candidate.name === section.name,
+    );
+    if (existingSection === undefined) {
+      lines = appendYamlBlock(lines, section.block);
+      continue;
+    }
+    if (section.name === "on" || section.name === "jobs") {
+      lines = mergeYamlChildren(
+        lines,
+        existingSection.name,
+        section.block,
+        section.name === "jobs",
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+type YamlSection = {
+  readonly name: string;
+  readonly start: number;
+  readonly end: number;
+  readonly block: string;
+};
+
+function yamlSections(content: string, indentation: number): YamlSection[] {
+  const lines = content.split("\n");
+  const sections: YamlSection[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const name = yamlKey(lines[index] ?? "", indentation);
+    if (name === undefined) continue;
+    const next = lines.findIndex(
+      (line, candidateIndex) => candidateIndex > index && yamlKey(line, indentation) !== undefined,
+    );
+    const end = next < 0 ? lines.length : next;
+    sections.push({
+      name,
+      start: index,
+      end,
+      block: lines.slice(index, end).join("\n"),
+    });
+  }
+  return sections;
+}
+
+function yamlKey(line: string, indentation: number): string | undefined {
+  const leadingWhitespace = line.match(/^\s*/)?.[0].length ?? 0;
+  if (leadingWhitespace !== indentation) return undefined;
+  const value = line.slice(indentation);
+  if (value.startsWith("-")) return undefined;
+  const separator = value.indexOf(":");
+  if (separator <= 0) return undefined;
+  const name = value.slice(0, separator).trim();
+  return name.length > 0 && !name.includes(" ") ? name : undefined;
+}
+
+function mergeYamlChildren(
+  lines: string[],
+  sectionName: string,
+  generatedBlock: string,
+  mergeSteps: boolean,
+): string[] {
+  let merged = [...lines];
+  for (const generatedChild of yamlSections(generatedBlock, 2)) {
+    const currentSection = yamlSections(merged.join("\n"), 0).find(
+      (section) => section.name === sectionName,
+    );
+    if (currentSection === undefined) continue;
+    const currentBlock = merged.slice(currentSection.start, currentSection.end).join("\n");
+    const existingChild = yamlSections(currentBlock, 2).find(
+      (child) => child.name === generatedChild.name,
+    );
+    if (existingChild === undefined) {
+      merged.splice(currentSection.end, 0, ...generatedChild.block.split("\n"), "");
+      continue;
+    }
+    if (!mergeSteps && generatedChild.name === "push") {
+      merged = mergeWorkflowBranches(merged, currentSection, existingChild, generatedChild);
+    }
+    if (mergeSteps && generatedChild.name === "verify") {
+      merged = mergeWorkflowSteps(merged, currentSection, existingChild, generatedChild);
+    }
+  }
+  return merged;
+}
+
+function mergeWorkflowBranches(
+  lines: string[],
+  onSection: YamlSection,
+  existingPush: YamlSection,
+  generatedPush: YamlSection,
+): string[] {
+  const generatedMatch = /branches:\s*\[([^\]]*)\]/.exec(generatedPush.block);
+  if (generatedMatch === null) return lines;
+  const pushStart = onSection.start + existingPush.start;
+  const pushEnd = onSection.start + existingPush.end;
+  const existingLines = lines.slice(pushStart, pushEnd);
+  const existingMatch = /^(\s*)branches:\s*\[([^\]]*)\]/m.exec(existingLines.join("\n"));
+  const generatedBranches = (generatedMatch[1] ?? "")
+    .split(",")
+    .map((branch) => branch.trim())
+    .filter(Boolean);
+  if (existingMatch === null) {
+    const indentation = " ".repeat(4);
+    lines.splice(pushStart + 1, 0, `${indentation}branches: [${generatedBranches.join(", ")}]`);
+    return lines;
+  }
+
+  const existingBranches = (existingMatch[2] ?? "")
+    .split(",")
+    .map((branch) => branch.trim())
+    .filter(Boolean);
+  const branches = [
+    ...existingBranches,
+    ...generatedBranches.filter((branch) => !existingBranches.includes(branch)),
+  ];
+  const replacement = `${existingMatch[1]}branches: [${branches.join(", ")}]`;
+  const mergedPush = existingLines.join("\n").replace(existingMatch[0], replacement);
+  lines.splice(pushStart, existingLines.length, ...mergedPush.split("\n"));
+  return lines;
+}
+
+function mergeWorkflowSteps(
+  lines: string[],
+  jobsSection: YamlSection,
+  existingJob: YamlSection,
+  generatedJob: YamlSection,
+): string[] {
+  const jobStart = jobsSection.start + existingJob.start;
+  const jobEnd = jobsSection.start + existingJob.end;
+  const existingJobLines = lines.slice(jobStart, jobEnd);
+  const generatedSteps = yamlSections(generatedJob.block, 4).find(
+    (section) => section.name === "steps",
+  );
+  if (generatedSteps === undefined) return lines;
+
+  const existingSteps = yamlSections(existingJobLines.join("\n"), 4).find(
+    (section) => section.name === "steps",
+  );
+  if (existingSteps === undefined) {
+    lines.splice(jobEnd, 0, ...generatedSteps.block.split("\n"), "");
+    return lines;
+  }
+
+  const existingIdentities = new Set(
+    existingJobLines
+      .filter((line) => /^\s+- (?:uses|run):\s*/.test(line))
+      .map((line) => line.trim()),
+  );
+  const generatedStepLines = generatedSteps.block.split("\n");
+  const missingSteps: string[] = [];
+  for (let index = 1; index < generatedStepLines.length; index += 1) {
+    const line = generatedStepLines[index] ?? "";
+    if (!/^\s{6}- /.test(line)) continue;
+    const identity = line.trim();
+    if (existingIdentities.has(identity)) continue;
+    const nextStep = generatedStepLines.findIndex(
+      (candidate, candidateIndex) => candidateIndex > index && /^\s{6}- /.test(candidate),
+    );
+    const end = nextStep < 0 ? generatedStepLines.length : nextStep;
+    missingSteps.push(...generatedStepLines.slice(index, end));
+    index = end - 1;
+  }
+  if (missingSteps.length === 0) return lines;
+  const insertion = jobsSection.start + existingJob.start + existingSteps.end;
+  lines.splice(insertion, 0, ...missingSteps);
+  return lines;
+}
+
+function appendYamlBlock(lines: readonly string[], block: string): string[] {
+  const result = [...lines];
+  while (result.at(-1) === "") result.pop();
+  result.push("", ...block.split("\n"), "");
+  return result;
+}
+
+function mergeImports(existingContent: string, generatedContent: string): string {
+  const missing = importLines(generatedContent).filter((line) => !existingContent.includes(line));
+  if (missing.length === 0) return existingContent;
+  const shebang = existingContent.startsWith("#!") ? `${existingContent.split("\n")[0]}\n` : "";
+  const body = shebang.length > 0 ? existingContent.slice(shebang.length) : existingContent;
+  return `${shebang}${missing.join("\n")}\n${body}`;
+}
+
+function importLines(content: string): string[] {
+  return content.split("\n").filter((line) => /^import\s/.test(line.trim()));
+}
+
+function arrayEntries(content: string, property: string): string[] {
+  const match = new RegExp(`${escapeRegExp(property)}\\s*:\\s*\\[([\\s\\S]*?)\\]`).exec(content);
+  if (match === null) return [];
+  return (match[1] ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function mergeArrayProperty(
+  content: string,
+  property: string,
+  generatedEntries: readonly string[],
+): string {
+  const propertyPattern = new RegExp(`${escapeRegExp(property)}\\s*:\\s*\\[([\\s\\S]*?)\\]`);
+  const match = propertyPattern.exec(content);
+  if (match === null)
+    return insertConfigProperty(content, `${property}: [${generatedEntries.join(", ")}]`);
+
+  const existingEntries = arrayEntries(content, property);
+  const entries = [
+    ...existingEntries,
+    ...generatedEntries.filter((entry) => !existingEntries.includes(entry)),
+  ];
+  return content.replace(match[0], `${property}: [${entries.join(", ")}]`);
+}
+
+function mergePlugins(
+  content: string,
+  generatedPlugins: readonly { readonly name: string; readonly specifier: string }[],
+): string {
+  const propertyPattern = /jsPlugins\s*:\s*\[([\s\S]*?)\]/;
+  const match = propertyPattern.exec(content);
+  if (match === null) {
+    const properties = ["jsPlugins: ["];
+    for (const plugin of generatedPlugins) {
+      properties.push(
+        "  {",
+        `    name: ${JSON.stringify(plugin.name)},`,
+        `    specifier: ${JSON.stringify(plugin.specifier)},`,
+        "  },",
+      );
+    }
+    properties.push("]");
+    return insertConfigProperty(content, properties.join("\n"));
+  }
+
+  const existingNames = [...(match[1] ?? "").matchAll(/name\s*:\s*["']([^"']+)["']/g)].map(
+    (entry) => entry[1],
+  );
+  const missing = generatedPlugins.filter((plugin) => !existingNames.includes(plugin.name));
+  if (missing.length === 0) return content;
+
+  const additions: string[] = [];
+  for (const plugin of missing) {
+    additions.push(
+      "{",
+      `  name: ${JSON.stringify(plugin.name)},`,
+      `  specifier: ${JSON.stringify(plugin.specifier)},`,
+      "}",
+    );
+  }
+  const body = match[1]?.trim() ?? "";
+  const replacementBody =
+    body.length === 0 ? additions.join("\n") : `${body},\n${additions.join("\n")}`;
+  return content.replace(match[0], `jsPlugins: [${replacementBody}]`);
+}
+
+function pluginEntries(content: string): { readonly name: string; readonly specifier: string }[] {
+  const plugins: { name: string; specifier: string }[] = [];
+  const pattern = /name\s*:\s*["']([^"']+)["'][\s\S]*?specifier\s*:\s*["']([^"']+)["']/g;
+  for (const match of content.matchAll(pattern)) {
+    const name = match[1];
+    const specifier = match[2];
+    if (name !== undefined && specifier !== undefined) plugins.push({ name, specifier });
+  }
+  return plugins;
+}
+
+function propertyLine(content: string, property: string): string | undefined {
+  return content
+    .split("\n")
+    .find((line) => new RegExp(`^\\s*${escapeRegExp(property)}\\s*:`).test(line));
+}
+
+function hasProperty(content: string, property: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(property)}\\s*:`).test(content);
+}
+
+function hasConfigObject(content: string): boolean {
+  return content.includes("defineConfig({") || content.includes("export default {");
+}
+
+function insertConfigProperty(content: string, property: string): string {
+  const defineConfig = content.indexOf("defineConfig({");
+  if (defineConfig >= 0)
+    return insertPropertyAt(content, defineConfig + "defineConfig(".length, property);
+
+  const defaultObject = content.indexOf("export default {");
+  if (defaultObject >= 0)
+    return insertPropertyAt(content, defaultObject + "export default ".length, property);
+  return content;
+}
+
+function insertPropertyAt(content: string, openBrace: number, property: string): string {
+  const closeBrace = matchingDelimiter(content, openBrace, "{", "}");
+  if (closeBrace < 0) return content;
+  const body = content.slice(openBrace + 1, closeBrace);
+  const trimmedBody = body.trimEnd();
+  const closeLineStart = content.lastIndexOf("\n", closeBrace) + 1;
+  const closeIndent = content.slice(closeLineStart, closeBrace).match(/^\s*/)?.[0] ?? "";
+  const propertyIndent = `${closeIndent}  `;
+  const normalizedProperty = property
+    .split("\n")
+    .map((line) => `${propertyIndent}${line.trim()}`)
+    .join("\n");
+  const separator = trimmedBody.length === 0 ? "" : trimmedBody.endsWith(",") ? "" : ",";
+  const prefix = content.slice(0, openBrace + 1) + trimmedBody + separator + "\n";
+  return `${prefix}${normalizedProperty}\n${closeIndent}${content.slice(closeBrace)}`;
+}
+
+function propertyObjectOpen(content: string, property: string): number | undefined {
+  const match = new RegExp(`${escapeRegExp(property)}\\s*:\\s*\\{`).exec(content);
+  return match === null ? undefined : content.indexOf("{", match.index);
+}
+
+function matchingDelimiter(
+  content: string,
+  open: number,
+  openChar: string,
+  closeChar: string,
+): number {
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = open; index < content.length; index += 1) {
+    const character = content[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === openChar) depth += 1;
+    if (character === closeChar) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function uniqueJsonValues(values: readonly JsonValue[]): JsonValue[] {
+  const result: JsonValue[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const serialized = JSON.stringify(value);
+    if (seen.has(serialized)) continue;
+    seen.add(serialized);
+    result.push(value);
+  }
+  return result;
+}
+
+function asJsonObject(value: JsonValue | undefined): JsonObject {
+  return isJsonObject(value) ? value : {};
+}
+
+function asJsonArray(value: JsonValue | undefined): JsonValue[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
