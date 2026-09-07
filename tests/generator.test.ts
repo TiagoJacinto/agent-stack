@@ -419,6 +419,38 @@ describe("generateProject", () => {
     expect(config.test.include).toEqual(["tests/**/*.test.ts"]);
   });
 
+  it("merges a quoted Vitest test key", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "vitest.config.ts"),
+      'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({ "test": {} });\n',
+      "utf8",
+    );
+
+    await mergeProject({ targetDirectory, selection: createFeatureSelection(["vitest"]) });
+
+    const config = evaluateGeneratedModule<{ test: { include: string[] } }>(
+      await readFile(join(targetDirectory, "vitest.config.ts"), "utf8"),
+    );
+    expect(config.test.include).toEqual(["tests/**/*.test.ts"]);
+  });
+
+  it("preserves comments when merging array entries", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "vitest.config.ts"),
+      'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  test: { include: ["tests/**/*.spec.ts", // keep\n  ] },\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({ targetDirectory, selection: createFeatureSelection(["vitest"]) });
+
+    const config = evaluateGeneratedModule<{ test: { include: string[] } }>(
+      await readFile(join(targetDirectory, "vitest.config.ts"), "utf8"),
+    );
+    expect(config.test.include).toEqual(["tests/**/*.spec.ts", "tests/**/*.test.ts"]);
+  });
+
   it("reports an aliased Stryker export before writing", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
@@ -500,6 +532,112 @@ describe("generateProject", () => {
     );
     expect(config[0].ignores).toEqual(["dist;generated/**"]);
     expect(config[1].id).toBe("eslint-core");
+  });
+
+  it("normalizes inline workflow triggers with comments", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
+    await writeFile(
+      join(targetDirectory, ".github/workflows/ci.yml"),
+      "name: Existing CI\n\non: push # keep\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["github-actions"]),
+    });
+
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.triggers).toEqual(
+      expect.objectContaining({ pull_request: {}, push: { branches: ["main"] } }),
+    );
+  });
+
+  it("normalizes inline workflow trigger maps", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
+    await writeFile(
+      join(targetDirectory, ".github/workflows/ci.yml"),
+      "name: Existing CI\n\non: { push: {} }\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["github-actions"]),
+    });
+
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.triggers.push).toEqual({ branches: ["main"] });
+  });
+
+  it("deduplicates quoted workflow branches", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
+    await writeFile(
+      join(targetDirectory, ".github/workflows/ci.yml"),
+      'name: Existing CI\n\non:\n  push:\n    branches: ["main"]\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["github-actions"]),
+    });
+
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.triggers.push).toEqual({ branches: ["main"] });
+  });
+
+  it("preserves a top-level plugin beside nested plugins", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\n\nexport default defineConfig({\n  overrides: [{ jsPlugins: [] }],\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "anti-slop"]),
+    });
+
+    const config = evaluateGeneratedModule<{
+      jsPlugins: { name: string }[];
+      overrides: { jsPlugins: unknown[] }[];
+    }>(await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"));
+    expect(config.jsPlugins.map(({ name }) => name)).toEqual(["anti-slop"]);
+    expect(config.overrides[0]?.jsPlugins).toEqual([]);
+  });
+
+  it("preserves trailing comments in ESLint exports", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "eslint.config.mjs"),
+      'import customConfig from "custom";\n\nexport default customConfig() // keep\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["eslint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<[{ id: string }, { id: string }]>(
+      await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"),
+      {
+        ...generatedConfigModules,
+        custom: { default: (): { id: string } => ({ id: "custom" }) },
+      },
+    );
+    expect(config.map(({ id }) => id)).toEqual(["custom", "eslint-core"]);
   });
 
   it("reports every conflicting managed path before writing files", async () => {

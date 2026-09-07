@@ -377,23 +377,39 @@ function mergeWorkflow(existingContent: string, generatedContent: string): strin
 
 function normalizeFlowWorkflowTriggers(lines: string[], section: YamlSection): string[] {
   const line = lines[section.start] ?? "";
-  const match = /^on:\s*(\[[^\]]*\]|[^\s#]+)\s*$/.exec(line);
+  const match = /^(\s*)on:\s*(.*)$/.exec(line);
   if (match === null) return lines;
-  const value = match[1] ?? "";
-  const triggers = value.startsWith("[")
-    ? value
-        .slice(1, -1)
-        .split(",")
-        .map((trigger) => trigger.trim().replace(/^["']|["']$/g, ""))
-        .filter(Boolean)
-    : [value.replace(/^["']|["']$/g, "")];
-  const indentation = line.slice(0, line.indexOf("on:"));
+  const inlineValue = (match[2] ?? "").trim();
+  const commentStart = inlineValue.indexOf("#");
+  const value = (commentStart < 0 ? inlineValue : inlineValue.slice(0, commentStart)).trim();
+  const comment = commentStart < 0 ? "" : ` ${inlineValue.slice(commentStart).trim()}`;
+  const triggers = inlineWorkflowTriggerNames(value);
+  if (triggers.length === 0 && value.length === 0) return lines;
+  const indentation = match[1] ?? "";
   const replacement = [
     `${indentation}on:`,
-    ...triggers.map((trigger) => `${indentation}  ${trigger}:`),
+    ...triggers.map(
+      (trigger, index) => `${indentation}  ${trigger}:${index === 0 ? comment : ""}`,
+    ),
   ];
   lines.splice(section.start, section.end - section.start, ...replacement);
   return lines;
+}
+
+function inlineWorkflowTriggerNames(value: string): string[] {
+  if (value.startsWith("[") && value.endsWith("]")) {
+    return value
+      .slice(1, -1)
+      .split(",")
+      .map((trigger) => normalizeYamlScalar(trigger))
+      .filter(Boolean);
+  }
+  if (value.startsWith("{") && value.endsWith("}")) {
+    return [...value.slice(1, -1).matchAll(/(?:^|,)\s*(?:(["'])(.*?)\1|([\w-]+))\s*:/g)]
+      .map((match) => match[2] ?? match[3] ?? "")
+      .filter(Boolean);
+  }
+  return [normalizeYamlScalar(value)].filter(Boolean);
 }
 
 type YamlSection = {
@@ -487,7 +503,7 @@ function yamlBranches(content: string): YamlBranches | undefined {
         branches: value
           .slice(1, -1)
           .split(",")
-          .map((branch) => branch.trim())
+          .map((branch) => normalizeYamlScalar(branch))
           .filter(Boolean),
         style: "flow",
       };
@@ -498,11 +514,24 @@ function yamlBranches(content: string): YamlBranches | undefined {
     for (; end < lines.length; end += 1) {
       const branch = /^(\s+)-\s*(.+)$/.exec(lines[end] ?? "");
       if (branch === null || (branch[1]?.length ?? 0) <= indentation.length) break;
-      branches.push(branch[2] ?? "");
+      branches.push(normalizeYamlScalar(branch[2] ?? ""));
     }
     return { start: index, end, indentation, branches, style: "block" };
   }
   return undefined;
+}
+
+function normalizeYamlScalar(value: string): string {
+  const trimmed = value.trim();
+  const first = trimmed[0];
+  const last = trimmed.at(-1);
+  if (
+    trimmed.length >= 2 &&
+    ((first === "'" && last === "'") || (first === '"' && last === '"'))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 function mergeWorkflowBranches(
@@ -738,17 +767,21 @@ function mergeArrayProperty(
 
   const existingEntries = arrayValueEntries(existingValue);
   const seen = new Set(existingEntries.map(normalizeArrayEntry));
-  const entries = [...existingEntries];
+  const additions: string[] = [];
   for (const entry of generatedEntries) {
     const normalized = normalizeArrayEntry(entry);
     if (seen.has(normalized)) continue;
     seen.add(normalized);
-    entries.push(entry);
+    additions.push(entry);
   }
+  if (additions.length === 0) return { content, conflicts: [] };
+  const mergedValue = hasArrayComment(existingValue)
+    ? appendArrayEntriesPreservingComments(existingValue, additions)
+    : `[${[...existingEntries, ...additions].join(", ")}]`;
   return {
     content:
       content.slice(0, existingProperty.start) +
-      `${property}: [${entries.join(", ")}]` +
+      `${property}: ${mergedValue}` +
       content.slice(existingProperty.end),
     conflicts: [],
   };
@@ -827,7 +860,7 @@ function expressionEnd(content: string, start: number, limit: number): number {
 }
 
 function arrayValueEntries(value: string): string[] {
-  const body = value.trim().slice(1, -1);
+  const body = removeArrayComments(value.trim().slice(1, -1));
   const entries: string[] = [];
   let start = 0;
   let curlyDepth = 0;
@@ -871,6 +904,112 @@ function arrayValueEntries(value: string): string[] {
   return entries;
 }
 
+function removeArrayComments(body: string): string {
+  let result = "";
+  let quote = "";
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    const nextCharacter = body[index + 1];
+    if (lineComment) {
+      if (character === "\n") {
+        lineComment = false;
+        result += character;
+      } else {
+        result += " ";
+      }
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && nextCharacter === "/") {
+        blockComment = false;
+        result += "  ";
+        index += 1;
+      } else {
+        result += character === "\n" ? "\n" : " ";
+      }
+      continue;
+    }
+    if (quote.length > 0) {
+      result += character;
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      result += character;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "/") {
+      lineComment = true;
+      result += "  ";
+      index += 1;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "*") {
+      blockComment = true;
+      result += "  ";
+      index += 1;
+      continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+function hasArrayComment(value: string): boolean {
+  return arrayCommentStart(value.trim().slice(1, -1)) >= 0;
+}
+
+function appendArrayEntriesPreservingComments(
+  value: string,
+  additions: readonly string[],
+): string {
+  const body = value.trim().slice(1, -1);
+  const commentStart = arrayCommentStart(body);
+  if (commentStart < 0) return `[${additions.join(", ")}]`;
+  const prefix = body.slice(0, commentStart).trimEnd();
+  if (prefix.length === 0) {
+    const trimmedBody = body.trimEnd();
+    const separator = trimmedBody.endsWith(",") ? " " : ", ";
+    return `[${trimmedBody}${separator}${additions.join(", ")}]`;
+  }
+  const separator = prefix.endsWith(",") ? " " : ", ";
+  return `[${prefix}${separator}${additions.join(", ")}, ${body
+    .slice(commentStart)
+    .trimStart()}]`;
+}
+
+function arrayCommentStart(body: string): number {
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index];
+    const nextCharacter = body[index + 1];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (
+      (character === "/" && nextCharacter === "/") ||
+      (character === "/" && nextCharacter === "*")
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
 function normalizeArrayEntry(entry: string): string {
   const trimmed = entry.trim();
   const first = trimmed[0];
@@ -888,9 +1027,8 @@ function mergePlugins(
   content: string,
   generatedPlugins: readonly { readonly name: string; readonly specifier: string }[],
 ): string {
-  const propertyPattern = /jsPlugins\s*:\s*\[([\s\S]*?)\]/;
-  const match = propertyPattern.exec(content);
-  if (match === null) {
+  const existingProperty = topLevelProperty(content, configObjectOpen(content), "jsPlugins");
+  if (existingProperty === undefined) {
     const properties = ["jsPlugins: ["];
     for (const plugin of generatedPlugins) {
       properties.push(
@@ -904,9 +1042,9 @@ function mergePlugins(
     return insertConfigProperty(content, properties.join("\n"));
   }
 
-  const existingNames = [...(match[1] ?? "").matchAll(/name\s*:\s*["']([^"']+)["']/g)].map(
-    (entry) => entry[1],
-  );
+  const existingValue = existingProperty.value.trim();
+  if (!existingValue.startsWith("[") || !existingValue.endsWith("]")) return content;
+  const existingNames = pluginEntries(existingValue).map(({ name }) => name);
   const missing = generatedPlugins.filter((plugin) => !existingNames.includes(plugin.name));
   if (missing.length === 0) return content;
 
@@ -919,10 +1057,14 @@ function mergePlugins(
       "}",
     );
   }
-  const body = match[1]?.trim() ?? "";
+  const body = existingValue.slice(1, -1).trim();
   const replacementBody =
     body.length === 0 ? additions.join("\n") : `${body},\n${additions.join("\n")}`;
-  return content.replace(match[0], `jsPlugins: [${replacementBody}]`);
+  return (
+    content.slice(0, existingProperty.start) +
+    `jsPlugins: [${replacementBody}]` +
+    content.slice(existingProperty.end)
+  );
 }
 
 function pluginEntries(content: string): { readonly name: string; readonly specifier: string }[] {
@@ -998,8 +1140,19 @@ function defaultExportStatementEnd(content: string, start: number): number {
   let parenDepth = 0;
   let quote = "";
   let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
   for (let index = start; index < content.length; index += 1) {
     const character = content[index];
+    const nextCharacter = content[index + 1];
+    if (lineComment) {
+      if (character === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && nextCharacter === "/") blockComment = false;
+      continue;
+    }
     if (quote.length > 0) {
       if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
@@ -1008,6 +1161,16 @@ function defaultExportStatementEnd(content: string, start: number): number {
     }
     if (character === '"' || character === "'" || character === "`") {
       quote = character;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "/") {
+      if (curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) return index;
+      lineComment = true;
+      continue;
+    }
+    if (character === "/" && nextCharacter === "*") {
+      if (curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) return index;
+      blockComment = true;
       continue;
     }
     if (character === "{") curlyDepth += 1;
@@ -1047,7 +1210,10 @@ function insertPropertyAt(content: string, openBrace: number, property: string):
 }
 
 function propertyObjectOpen(content: string, property: string): number | undefined {
-  const match = new RegExp(`${escapeRegExp(property)}\\s*:\\s*\\{`).exec(content);
+  const escapedProperty = escapeRegExp(property);
+  const match = new RegExp(
+    `(?:${escapedProperty}|["']${escapedProperty}["'])\\s*:\\s*\\{`,
+  ).exec(content);
   return match === null ? undefined : content.indexOf("{", match.index);
 }
 
