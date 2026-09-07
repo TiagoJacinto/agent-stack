@@ -53,7 +53,7 @@ export function reconcileFile(
     return mergeVitestConfig(existingContent, generatedContent);
   }
   if (relativePath === "stryker.config.mjs") {
-    return reconciled(mergeObjectConfig(existingContent, generatedContent));
+    return mergeObjectConfig(existingContent, generatedContent);
   }
   if (relativePath === ".github/workflows/ci.yml") {
     return reconciled(mergeWorkflow(existingContent, generatedContent));
@@ -209,12 +209,28 @@ function mergeMarkdown(existingContent: string, generatedContent: string): strin
 }
 
 function mergeOxlintConfig(existingContent: string, generatedContent: string): Reconciliation {
-  let merged = mergeImports(existingContent, generatedContent);
+  const imports = mergeImports(existingContent, generatedContent, "oxlint.config.ts");
+  if (imports.conflicts.length > 0) {
+    return { content: existingContent, changed: false, conflicts: imports.conflicts };
+  }
+  let merged = imports.content;
   if (!existingContent.includes("defineConfig(")) {
     merged = merged.replace(/^import \{ defineConfig \} from "oxlint";\n?/m, "");
   }
   const generatedExtends = arrayEntries(generatedContent, "extends");
-  if (generatedExtends.length > 0) merged = mergeArrayProperty(merged, "extends", generatedExtends);
+  if (generatedExtends.length > 0) {
+    const result = mergeArrayProperty(
+      merged,
+      "extends",
+      generatedExtends,
+      configObjectOpen(merged),
+      "oxlint.config.ts.extends",
+    );
+    if (result.conflicts.length > 0) {
+      return { content: existingContent, changed: false, conflicts: result.conflicts };
+    }
+    merged = result.content;
+  }
 
   const generatedPlugins = pluginEntries(generatedContent);
   if (generatedPlugins.length > 0) merged = mergePlugins(merged, generatedPlugins);
@@ -235,7 +251,11 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
   if (generatedImports.length === 0)
     return { content: existingContent, changed: false, conflicts: [] };
 
-  let merged = mergeImports(existingContent, generatedContent);
+  const imports = mergeImports(existingContent, generatedContent, "eslint.config.mjs");
+  if (imports.conflicts.length > 0) {
+    return { content: existingContent, changed: false, conflicts: imports.conflicts };
+  }
+  let merged = imports.content;
   if (/export default\s+[^;]*\bcore\b/.test(merged)) return reconciled(merged);
 
   const exportMatch = /export default\s+(\[[\s\S]*?\]|[^;\n]+)\s*;?/.exec(merged);
@@ -261,31 +281,52 @@ function mergeEslintConfig(existingContent: string, generatedContent: string): R
 }
 
 function mergeVitestConfig(existingContent: string, generatedContent: string): Reconciliation {
-  let merged = mergeImports(existingContent, generatedContent);
+  const imports = mergeImports(existingContent, generatedContent, "vitest.config.ts");
+  if (imports.conflicts.length > 0) {
+    return { content: existingContent, changed: false, conflicts: imports.conflicts };
+  }
+  let merged = imports.content;
   const generatedInclude = arrayEntries(generatedContent, "include");
   if (generatedInclude.length > 0) {
-    if (hasProperty(merged, "include")) {
-      merged = mergeArrayProperty(merged, "include", generatedInclude);
-    } else {
-      const testObject = propertyObjectOpen(merged, "test");
-      if (testObject === undefined) {
-        return { content: existingContent, changed: false, conflicts: ["vitest.config.ts:test"] };
-      }
-      merged = insertPropertyAt(
-        merged,
-        testObject,
-        `include: [${generatedInclude.map((entry) => JSON.stringify(entry)).join(", ")}]`,
-      );
+    const testObject = propertyObjectOpen(merged, "test");
+    if (testObject === undefined) {
+      return { content: existingContent, changed: false, conflicts: ["vitest.config.ts:test"] };
     }
+    const result = mergeArrayProperty(
+      merged,
+      "include",
+      generatedInclude,
+      testObject,
+      "vitest.config.ts:test.include",
+    );
+    if (result.conflicts.length > 0) {
+      return { content: existingContent, changed: false, conflicts: result.conflicts };
+    }
+    merged = result.content;
   }
   return reconciled(merged);
 }
 
-function mergeObjectConfig(existingContent: string, generatedContent: string): string {
-  let merged = mergeImports(existingContent, generatedContent);
+function mergeObjectConfig(existingContent: string, generatedContent: string): Reconciliation {
+  const imports = mergeImports(existingContent, generatedContent, "stryker.config.mjs");
+  if (imports.conflicts.length > 0) {
+    return { content: existingContent, changed: false, conflicts: imports.conflicts };
+  }
+  let merged = imports.content;
+  const conflicts: string[] = [];
   for (const property of ["plugins", "reporters", "mutate"]) {
     const entries = arrayEntries(generatedContent, property);
-    if (entries.length > 0) merged = mergeArrayProperty(merged, property, entries);
+    if (entries.length > 0) {
+      const result = mergeArrayProperty(
+        merged,
+        property,
+        entries,
+        configObjectOpen(merged),
+        `stryker.config.mjs.${property}`,
+      );
+      conflicts.push(...result.conflicts);
+      merged = result.content;
+    }
   }
   for (const line of generatedContent.split("\n")) {
     const match = /^\s{2}([A-Za-z][\w]*):\s*(.+),?$/.exec(line);
@@ -293,7 +334,10 @@ function mergeObjectConfig(existingContent: string, generatedContent: string): s
       merged = insertConfigProperty(merged, line.trimEnd());
     }
   }
-  return merged;
+  if (conflicts.length > 0) {
+    return { content: existingContent, changed: false, conflicts };
+  }
+  return reconciled(merged);
 }
 
 function mergeWorkflow(existingContent: string, generatedContent: string): string {
@@ -387,39 +431,91 @@ function mergeYamlChildren(
   return merged;
 }
 
+type YamlBranches = {
+  readonly start: number;
+  readonly end: number;
+  readonly indentation: string;
+  readonly branches: readonly string[];
+  readonly style: "flow" | "block";
+};
+
+function yamlBranches(content: string): YamlBranches | undefined {
+  const lines = content.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^(\s*)branches:\s*(.*)$/.exec(lines[index] ?? "");
+    if (match === null) continue;
+    const indentation = match[1] ?? "";
+    const value = match[2] ?? "";
+    if (value.startsWith("[") && value.endsWith("]")) {
+      return {
+        start: index,
+        end: index + 1,
+        indentation,
+        branches: value
+          .slice(1, -1)
+          .split(",")
+          .map((branch) => branch.trim())
+          .filter(Boolean),
+        style: "flow",
+      };
+    }
+    if (value.length > 0) continue;
+    const branches: string[] = [];
+    let end = index + 1;
+    for (; end < lines.length; end += 1) {
+      const branch = /^(\s+)-\s*(.+)$/.exec(lines[end] ?? "");
+      if (branch === null || (branch[1]?.length ?? 0) <= indentation.length) break;
+      branches.push(branch[2] ?? "");
+    }
+    return { start: index, end, indentation, branches, style: "block" };
+  }
+  return undefined;
+}
+
 function mergeWorkflowBranches(
   lines: string[],
   onSection: YamlSection,
   existingPush: YamlSection,
   generatedPush: YamlSection,
 ): string[] {
-  const generatedMatch = /branches:\s*\[([^\]]*)\]/.exec(generatedPush.block);
-  if (generatedMatch === null) return lines;
   const pushStart = onSection.start + existingPush.start;
   const pushEnd = onSection.start + existingPush.end;
   const existingLines = lines.slice(pushStart, pushEnd);
-  const existingMatch = /^(\s*)branches:\s*\[([^\]]*)\]/m.exec(existingLines.join("\n"));
-  const generatedBranches = (generatedMatch[1] ?? "")
-    .split(",")
-    .map((branch) => branch.trim())
-    .filter(Boolean);
-  if (existingMatch === null) {
+  const generatedBranches = yamlBranches(generatedPush.block);
+  if (generatedBranches === undefined) return lines;
+  const existingBranches = yamlBranches(existingLines.join("\n"));
+  if (existingBranches === undefined) {
     const indentation = " ".repeat(4);
-    lines.splice(pushStart + 1, 0, `${indentation}branches: [${generatedBranches.join(", ")}]`);
+    lines.splice(
+      pushStart + 1,
+      0,
+      `${indentation}branches: [${generatedBranches.branches.join(", ")}]`,
+    );
     return lines;
   }
 
-  const existingBranches = (existingMatch[2] ?? "")
-    .split(",")
-    .map((branch) => branch.trim())
-    .filter(Boolean);
   const branches = [
-    ...existingBranches,
-    ...generatedBranches.filter((branch) => !existingBranches.includes(branch)),
+    ...existingBranches.branches,
+    ...generatedBranches.branches.filter(
+      (branch) => !existingBranches.branches.includes(branch),
+    ),
   ];
-  const replacement = `${existingMatch[1]}branches: [${branches.join(", ")}]`;
-  const mergedPush = existingLines.join("\n").replace(existingMatch[0], replacement);
-  lines.splice(pushStart, existingLines.length, ...mergedPush.split("\n"));
+  const mergedPush = [...existingLines];
+  if (existingBranches.style === "flow") {
+    mergedPush.splice(
+      existingBranches.start,
+      1,
+      `${existingBranches.indentation}branches: [${branches.join(", ")}]`,
+    );
+  } else {
+    mergedPush.splice(
+      existingBranches.start,
+      existingBranches.end - existingBranches.start,
+      `${existingBranches.indentation}branches:`,
+      ...branches.map((branch) => `${existingBranches.indentation}  - ${branch}`),
+    );
+  }
+  lines.splice(pushStart, existingLines.length, ...mergedPush);
   return lines;
 }
 
@@ -477,16 +573,66 @@ function appendYamlBlock(lines: readonly string[], block: string): string[] {
   return result;
 }
 
-function mergeImports(existingContent: string, generatedContent: string): string {
-  const missing = importLines(generatedContent).filter((line) => !existingContent.includes(line));
-  if (missing.length === 0) return existingContent;
+type ImportBinding = { readonly local: string; readonly source: string };
+
+function mergeImports(
+  existingContent: string,
+  generatedContent: string,
+  artifact: string,
+): { readonly content: string; readonly conflicts: readonly string[] } {
+  const existingBindings = new Map(
+    importLines(existingContent).flatMap((line) =>
+      importBindings(line).map((binding) => [binding.local, binding.source] as const),
+    ),
+  );
+  const missing: string[] = [];
+  const conflicts: string[] = [];
+  for (const line of importLines(generatedContent)) {
+    const bindings = importBindings(line);
+    for (const binding of bindings) {
+      const existingSource = existingBindings.get(binding.local);
+      if (existingSource !== undefined && existingSource !== binding.source) {
+        conflicts.push(`${artifact}:import ${binding.local}`);
+      }
+    }
+    if (
+      bindings.length === 0 ||
+      !bindings.every((binding) => existingBindings.get(binding.local) === binding.source)
+    ) {
+      if (!existingContent.includes(line)) missing.push(line);
+    }
+  }
+  if (conflicts.length > 0) {
+    return { content: existingContent, conflicts: [...new Set(conflicts)] };
+  }
+  if (missing.length === 0) return { content: existingContent, conflicts: [] };
   const shebang = existingContent.startsWith("#!") ? `${existingContent.split("\n")[0]}\n` : "";
   const body = shebang.length > 0 ? existingContent.slice(shebang.length) : existingContent;
-  return `${shebang}${missing.join("\n")}\n${body}`;
+  return { content: `${shebang}${missing.join("\n")}\n${body}`, conflicts: [] };
 }
 
 function importLines(content: string): string[] {
   return content.split("\n").filter((line) => /^import\s/.test(line.trim()));
+}
+
+function importBindings(line: string): readonly ImportBinding[] {
+  const match = /^import\s+(.+?)\s+from\s+["']([^"']+)["']/.exec(line.trim());
+  if (match === null) return [];
+  const clause = match[1]?.trim() ?? "";
+  const source = match[2] ?? "";
+  if (clause.startsWith("{")) {
+    return clause
+      .slice(1, clause.lastIndexOf("}"))
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const parts = entry.split(/\s+as\s+/);
+        return { local: (parts[1] ?? parts[0] ?? "").trim(), source };
+      });
+  }
+  if (clause.startsWith("* as ")) return [{ local: clause.slice(5).trim(), source }];
+  return [{ local: (clause.split(",")[0] ?? "").trim(), source }];
 }
 
 function arrayEntries(content: string, property: string): string[] {
@@ -502,18 +648,117 @@ function mergeArrayProperty(
   content: string,
   property: string,
   generatedEntries: readonly string[],
-): string {
-  const propertyPattern = new RegExp(`${escapeRegExp(property)}\\s*:\\s*\\[([\\s\\S]*?)\\]`);
-  const match = propertyPattern.exec(content);
-  if (match === null)
-    return insertConfigProperty(content, `${property}: [${generatedEntries.join(", ")}]`);
+  objectOpen: number,
+  conflictPath: string,
+): { readonly content: string; readonly conflicts: readonly string[] } {
+  if (objectOpen < 0) return { content, conflicts: [] };
+  const existingProperty = topLevelProperty(content, objectOpen, property);
+  if (existingProperty === undefined) {
+    return {
+      content: insertPropertyAt(
+        content,
+        objectOpen,
+        `${property}: [${generatedEntries.join(", ")}]`,
+      ),
+      conflicts: [],
+    };
+  }
 
-  const existingEntries = arrayEntries(content, property);
+  const existingValue = existingProperty.value.trim();
+  if (!existingValue.startsWith("[") || !existingValue.endsWith("]")) {
+    return { content, conflicts: [conflictPath] };
+  }
+
+  const existingEntries = arrayValueEntries(existingValue);
   const entries = [
     ...existingEntries,
     ...generatedEntries.filter((entry) => !existingEntries.includes(entry)),
   ];
-  return content.replace(match[0], `${property}: [${entries.join(", ")}]`);
+  return {
+    content:
+      content.slice(0, existingProperty.start) +
+      `${property}: [${entries.join(", ")}]` +
+      content.slice(existingProperty.end),
+    conflicts: [],
+  };
+}
+
+type PropertyLocation = {
+  readonly start: number;
+  readonly end: number;
+  readonly value: string;
+};
+
+function topLevelProperty(
+  content: string,
+  objectOpen: number,
+  property: string,
+): PropertyLocation | undefined {
+  if (objectOpen < 0) return undefined;
+  const objectClose = matchingDelimiter(content, objectOpen, "{", "}");
+  if (objectClose < 0) return undefined;
+
+  let cursor = objectOpen + 1;
+  while (cursor < objectClose) {
+    while (cursor < objectClose && /\s|,/.test(content[cursor] ?? "")) cursor += 1;
+    const keyMatch = /^([A-Za-z_$][\w$]*)\s*:/.exec(content.slice(cursor));
+    if (keyMatch === null) {
+      cursor += 1;
+      continue;
+    }
+    const key = keyMatch[1] ?? "";
+    const valueStart = cursor + keyMatch[0].length;
+    const valueEnd = expressionEnd(content, valueStart, objectClose);
+    if (key === property) {
+      return { start: cursor, end: valueEnd, value: content.slice(valueStart, valueEnd) };
+    }
+    cursor = valueEnd < objectClose ? valueEnd + 1 : objectClose;
+  }
+  return undefined;
+}
+
+function expressionEnd(content: string, start: number, limit: number): number {
+  let curlyDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = start; index < limit; index += 1) {
+    const character = content[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") curlyDepth += 1;
+    if (character === "}") curlyDepth -= 1;
+    if (character === "[") bracketDepth += 1;
+    if (character === "]") bracketDepth -= 1;
+    if (character === "(") parenDepth += 1;
+    if (character === ")") parenDepth -= 1;
+    if (
+      character === "," &&
+      curlyDepth === 0 &&
+      bracketDepth === 0 &&
+      parenDepth === 0
+    ) {
+      return index;
+    }
+  }
+  return limit;
+}
+
+function arrayValueEntries(value: string): string[] {
+  return value
+    .slice(1, -1)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 function mergePlugins(
@@ -579,17 +824,21 @@ function hasProperty(content: string, property: string): boolean {
 }
 
 function hasConfigObject(content: string): boolean {
-  return content.includes("defineConfig({") || content.includes("export default {");
+  return configObjectOpen(content) >= 0;
+}
+
+function configObjectOpen(content: string): number {
+  const defineConfig = content.indexOf("defineConfig({");
+  if (defineConfig >= 0) return defineConfig + "defineConfig(".length;
+
+  const defaultObject = content.indexOf("export default {");
+  if (defaultObject >= 0) return defaultObject + "export default ".length;
+  return -1;
 }
 
 function insertConfigProperty(content: string, property: string): string {
-  const defineConfig = content.indexOf("defineConfig({");
-  if (defineConfig >= 0)
-    return insertPropertyAt(content, defineConfig + "defineConfig(".length, property);
-
-  const defaultObject = content.indexOf("export default {");
-  if (defaultObject >= 0)
-    return insertPropertyAt(content, defaultObject + "export default ".length, property);
+  const objectOpen = configObjectOpen(content);
+  if (objectOpen >= 0) return insertPropertyAt(content, objectOpen, property);
   return content;
 }
 

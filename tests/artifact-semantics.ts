@@ -9,6 +9,7 @@ const customEslint = { id: "custom-eslint" };
 
 export const generatedConfigModules: Readonly<Record<string, unknown>> = {
   oxlint: { defineConfig: (config: unknown): unknown => config },
+  "vitest/config": { defineConfig: (config: unknown): unknown => config },
   "ultracite/oxlint/core": { default: ultraciteCore },
   "ultracite/oxlint/anti-slop": { default: ultraciteAntiSlop },
   "ultracite/eslint/core": { default: eslintCore },
@@ -57,14 +58,20 @@ export function parseWorkflow(content: string): WorkflowModel {
   let currentJob: { steps: WorkflowStep[] } | undefined;
   let readingSteps = false;
 
-  for (const line of content.split("\n")) {
+  const lines = content.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
     if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
     const indentation = line.length - line.trimStart().length;
     const value = line.trim();
 
     if (indentation === 0) {
-      const key = yamlKey(value);
-      section = key === "on" || key === "jobs" ? key : undefined;
+      const entry = yamlEntry(value);
+      section =
+        entry !== undefined && entry.value.length === 0 &&
+        (entry.key === "on" || entry.key === "jobs")
+          ? entry.key
+          : undefined;
       currentTrigger = undefined;
       currentJob = undefined;
       readingSteps = false;
@@ -82,7 +89,19 @@ export function parseWorkflow(content: string): WorkflowModel {
     if (section === "on" && indentation === 4 && currentTrigger !== undefined) {
       const entry = yamlEntry(value);
       if (entry?.key === "branches") {
-        triggers[currentTrigger] = { branches: flowArray(entry.value) };
+        if (entry.value.length > 0) {
+          triggers[currentTrigger] = { branches: flowArray(entry.value) };
+        } else {
+          const branches: string[] = [];
+          let branchIndex = index + 1;
+          for (; branchIndex < lines.length; branchIndex += 1) {
+            const branch = /^\s+-\s*(.+)$/.exec(lines[branchIndex] ?? "");
+            if (branch === null || (branch[0]?.search(/\S/) ?? 0) <= indentation) break;
+            branches.push(branch[1] ?? "");
+          }
+          triggers[currentTrigger] = { branches };
+          index = branchIndex - 1;
+        }
       }
       continue;
     }
@@ -110,10 +129,6 @@ export function parseWorkflow(content: string): WorkflowModel {
   }
 
   return { triggers, jobs };
-}
-
-function yamlKey(value: string): string | undefined {
-  return yamlEntry(value)?.key;
 }
 
 function yamlEntry(value: string): { readonly key: string; readonly value: string } | undefined {

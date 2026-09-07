@@ -272,6 +272,77 @@ describe("generateProject", () => {
     expect(eslint.map(({ id }) => id)).toEqual(["custom-eslint", "eslint-core"]);
   });
 
+  it("reports a scalar linter array collision before writing", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\nimport existing from "custom";\n\nexport default defineConfig({\n  extends: existing,\n});\n',
+      "utf8",
+    );
+
+    await expect(
+      mergeProject({
+        targetDirectory,
+        selection: createFeatureSelection(["oxlint", "ultracite"]),
+      }),
+    ).rejects.toThrow("oxlint.config.ts.extends");
+    await expect(readFile(join(targetDirectory, "tsconfig.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("reports an import binding collision before writing", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\nimport core from "custom";\n\nexport default defineConfig({});\n',
+      "utf8",
+    );
+
+    await expect(
+      mergeProject({
+        targetDirectory,
+        selection: createFeatureSelection(["oxlint", "ultracite"]),
+      }),
+    ).rejects.toThrow("oxlint.config.ts:import core");
+  });
+
+  it("merges Vitest includes within the test configuration", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "vitest.config.ts"),
+      'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  coverage: {\n    include: ["coverage/**/*.ts"],\n  },\n  test: {},\n});\n',
+      "utf8",
+    );
+
+    await mergeProject({ targetDirectory, selection: createFeatureSelection(["vitest"]) });
+
+    const config = evaluateGeneratedModule<{
+      coverage: { include: string[] };
+      test: { include: string[] };
+    }>(await readFile(join(targetDirectory, "vitest.config.ts"), "utf8"));
+    expect(config.coverage.include).toEqual(["coverage/**/*.ts"]);
+    expect(config.test.include).toEqual(["tests/**/*.test.ts"]);
+  });
+
+  it("merges block-style workflow branches", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
+    await writeFile(
+      join(targetDirectory, ".github/workflows/ci.yml"),
+      "name: Existing CI\n\non:\n  push:\n    branches:\n      - develop\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["github-actions"]),
+    });
+
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.triggers.push).toEqual({ branches: ["develop", "main"] });
+  });
+
   it("reports every conflicting managed path before writing files", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
