@@ -68,7 +68,8 @@ export function parseWorkflow(content: string): WorkflowModel {
     if (indentation === 0) {
       const entry = yamlEntry(value);
       section =
-        entry !== undefined && entry.value.length === 0 &&
+        entry !== undefined &&
+        entry.value.length === 0 &&
         (entry.key === "on" || entry.key === "jobs")
           ? entry.key
           : undefined;
@@ -122,7 +123,7 @@ export function parseWorkflow(content: string): WorkflowModel {
 
     if (section === "jobs" && indentation === 6 && readingSteps && value.startsWith("- ")) {
       const entry = yamlEntry(value.slice(2));
-      if (entry?.key === "run" || entry?.key === "uses") {
+      if ((entry?.key === "run" || entry?.key === "uses") && currentJob !== undefined) {
         currentJob.steps.push({ [entry.key]: entry.value });
       }
     }

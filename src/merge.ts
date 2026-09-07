@@ -134,8 +134,11 @@ function mergePackageJson(existingContent: string, generatedContent: string): st
     merged[key] = mergePreservingExistingValue(generated[key], existing[key]);
   }
 
-  const scripts = asJsonObject(merged.scripts);
-  if (scripts.test === "vitest run") scripts.test = "vitest run --passWithNoTests";
+  const scripts = isJsonObject(merged.scripts) ? merged.scripts : undefined;
+  const existingScripts = isJsonObject(existing.scripts) ? existing.scripts : undefined;
+  if (scripts?.test === "vitest run" && existingScripts?.test === undefined) {
+    scripts.test = "vitest run --passWithNoTests";
+  }
 
   return `${JSON.stringify(merged, null, 2)}\n`;
 }
@@ -233,7 +236,13 @@ function mergeOxlintConfig(existingContent: string, generatedContent: string): R
   }
 
   const generatedPlugins = pluginEntries(generatedContent);
-  if (generatedPlugins.length > 0) merged = mergePlugins(merged, generatedPlugins);
+  if (generatedPlugins.length > 0) {
+    const plugins = mergePlugins(merged, generatedPlugins);
+    if (plugins.conflicts.length > 0) {
+      return { content: existingContent, changed: false, conflicts: plugins.conflicts };
+    }
+    merged = plugins.content;
+  }
 
   const generatedIgnorePatterns = propertyLine(generatedContent, "ignorePatterns");
   if (
@@ -649,10 +658,7 @@ function normalizeYamlScalar(value: string): string {
   const trimmed = value.trim();
   const first = trimmed[0];
   const last = trimmed.at(-1);
-  if (
-    trimmed.length >= 2 &&
-    ((first === "'" && last === "'") || (first === '"' && last === '"'))
-  ) {
+  if (trimmed.length >= 2 && ((first === "'" && last === "'") || (first === '"' && last === '"'))) {
     return trimmed.slice(1, -1);
   }
   return trimmed;
@@ -682,9 +688,7 @@ function mergeWorkflowBranches(
 
   const branches = [
     ...existingBranches.branches,
-    ...generatedBranches.branches.filter(
-      (branch) => !existingBranches.branches.includes(branch),
-    ),
+    ...generatedBranches.branches.filter((branch) => !existingBranches.branches.includes(branch)),
   ];
   const mergedPush = [...existingLines];
   if (existingBranches.style === "flow") {
@@ -838,19 +842,18 @@ function importBindings(line: string): readonly ImportBinding[] {
   if (namedStart >= 0) {
     const defaultClause = clause.slice(0, namedStart).replace(/,\s*$/, "").trim();
     const namedClause = clause.slice(namedStart + 1, clause.lastIndexOf("}"));
-    const bindings: ImportBinding[] = defaultClause.length > 0
-      ? [{ local: defaultClause, source }]
-      : [];
+    const bindings: ImportBinding[] =
+      defaultClause.length > 0 ? [{ local: defaultClause, source }] : [];
     return [
       ...bindings,
       ...namedClause
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .map((entry) => {
-        const parts = entry.split(/\s+as\s+/);
-        return { local: (parts[1] ?? parts[0] ?? "").trim(), source };
-      }),
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const parts = entry.split(/\s+as\s+/);
+          return { local: (parts[1] ?? parts[0] ?? "").trim(), source };
+        }),
     ];
   }
   if (clause.startsWith("* as ")) return [{ local: clause.slice(5).trim(), source }];
@@ -860,9 +863,7 @@ function importBindings(line: string): readonly ImportBinding[] {
     const remainder = clause.slice(comma + 1).trim();
     return [
       { local: defaultBinding, source },
-      ...(remainder.startsWith("* as ")
-        ? [{ local: remainder.slice(5).trim(), source }]
-        : []),
+      ...(remainder.startsWith("* as ") ? [{ local: remainder.slice(5).trim(), source }] : []),
     ];
   }
   return [{ local: clause, source }];
@@ -940,9 +941,7 @@ function topLevelProperty(
   let cursor = objectOpen + 1;
   while (cursor < objectClose) {
     while (cursor < objectClose && /\s|,/.test(content[cursor] ?? "")) cursor += 1;
-    const keyMatch = /^(?:(['"])(.*?)\1|([A-Za-z_$][\w$]*))\s*:/.exec(
-      content.slice(cursor),
-    );
+    const keyMatch = /^(?:(['"])(.*?)\1|([A-Za-z_$][\w$]*))\s*:/.exec(content.slice(cursor));
     if (keyMatch === null) {
       cursor += 1;
       continue;
@@ -1008,12 +1007,7 @@ function expressionEnd(content: string, start: number, limit: number): number {
     if (character === "]") bracketDepth -= 1;
     if (character === "(") parenDepth += 1;
     if (character === ")") parenDepth -= 1;
-    if (
-      character === "," &&
-      curlyDepth === 0 &&
-      bracketDepth === 0 &&
-      parenDepth === 0
-    ) {
+    if (character === "," && curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
       return index;
     }
   }
@@ -1048,12 +1042,7 @@ function arrayValueEntries(value: string): string[] {
     if (character === "]") bracketDepth -= 1;
     if (character === "(") parenDepth += 1;
     if (character === ")") parenDepth -= 1;
-    if (
-      character === "," &&
-      curlyDepth === 0 &&
-      bracketDepth === 0 &&
-      parenDepth === 0
-    ) {
+    if (character === "," && curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
       const entry = body.slice(start, index).trim();
       if (entry.length > 0) entries.push(entry);
       start = index + 1;
@@ -1126,10 +1115,7 @@ function hasArrayComment(value: string): boolean {
   return arrayCommentStart(value.trim().slice(1, -1)) >= 0;
 }
 
-function appendArrayEntriesPreservingComments(
-  value: string,
-  additions: readonly string[],
-): string {
+function appendArrayEntriesPreservingComments(value: string, additions: readonly string[]): string {
   const body = value.trim().slice(1, -1);
   const commentStart = arrayCommentStart(body);
   if (commentStart < 0) return `[${additions.join(", ")}]`;
@@ -1140,9 +1126,7 @@ function appendArrayEntriesPreservingComments(
     return `[${trimmedBody}${separator}${additions.join(", ")}]`;
   }
   const separator = prefix.endsWith(",") ? " " : ", ";
-  return `[${prefix}${separator}${additions.join(", ")}, ${body
-    .slice(commentStart)
-    .trimStart()}]`;
+  return `[${prefix}${separator}${additions.join(", ")}, ${body.slice(commentStart).trimStart()}]`;
 }
 
 function arrayCommentStart(body: string): number {
@@ -1175,10 +1159,7 @@ function normalizeArrayEntry(entry: string): string {
   const trimmed = entry.trim();
   const first = trimmed[0];
   const last = trimmed.at(-1);
-  if (
-    trimmed.length >= 2 &&
-    ((first === "'" && last === "'") || (first === '"' && last === '"'))
-  ) {
+  if (trimmed.length >= 2 && ((first === "'" && last === "'") || (first === '"' && last === '"'))) {
     return trimmed.slice(1, -1).replace(/\\([\\'"`])/g, "$1");
   }
   return trimmed;
@@ -1187,7 +1168,7 @@ function normalizeArrayEntry(entry: string): string {
 function mergePlugins(
   content: string,
   generatedPlugins: readonly { readonly name: string; readonly specifier: string }[],
-): string {
+): Reconciliation {
   const existingProperty = topLevelProperty(content, configObjectOpen(content), "jsPlugins");
   if (existingProperty === undefined) {
     const properties = ["jsPlugins: ["];
@@ -1200,14 +1181,27 @@ function mergePlugins(
       );
     }
     properties.push("]");
-    return insertConfigProperty(content, properties.join("\n"));
+    return reconciled(insertConfigProperty(content, properties.join("\n")));
   }
 
   const existingValue = existingProperty.value.trim();
-  if (!existingValue.startsWith("[") || !existingValue.endsWith("]")) return content;
-  const existingNames = pluginEntries(existingValue).map(({ name }) => name);
+  if (!existingValue.startsWith("[") || !existingValue.endsWith("]")) {
+    return { content, changed: false, conflicts: [] };
+  }
+
+  const existingPlugins = pluginEntries(existingValue);
+  const conflicts = generatedPlugins
+    .map((plugin) => {
+      const existing = existingPlugins.find(({ name }) => name === plugin.name);
+      if (existing === undefined || existing.specifier === plugin.specifier) return undefined;
+      return `oxlint.config.ts.jsPlugins.${plugin.name}.specifier`;
+    })
+    .filter((conflict): conflict is string => conflict !== undefined);
+  if (conflicts.length > 0) return { content, changed: false, conflicts };
+
+  const existingNames = existingPlugins.map(({ name }) => name);
   const missing = generatedPlugins.filter((plugin) => !existingNames.includes(plugin.name));
-  if (missing.length === 0) return content;
+  if (missing.length === 0) return { content, changed: false, conflicts: [] };
 
   const additions: string[] = [];
   for (const plugin of missing) {
@@ -1221,10 +1215,10 @@ function mergePlugins(
   const body = existingValue.slice(1, -1).trim();
   const replacementBody =
     body.length === 0 ? additions.join("\n") : `${body},\n${additions.join("\n")}`;
-  return (
+  return reconciled(
     content.slice(0, existingProperty.start) +
-    `jsPlugins: [${replacementBody}]` +
-    content.slice(existingProperty.end)
+      `jsPlugins: [${replacementBody}]` +
+      content.slice(existingProperty.end),
   );
 }
 
@@ -1277,7 +1271,12 @@ function defaultExportExpression(content: string): DefaultExportExpression | und
 
   const firstCharacter = content[cursor];
   if (firstCharacter === "[" || firstCharacter === "{") {
-    const close = matchingDelimiter(content, cursor, firstCharacter, firstCharacter === "[" ? "]" : "}");
+    const close = matchingDelimiter(
+      content,
+      cursor,
+      firstCharacter,
+      firstCharacter === "[" ? "]" : "}",
+    );
     if (close < 0) return undefined;
     const end = content[close + 1] === ";" ? close + 2 : close + 1;
     return {
@@ -1368,9 +1367,7 @@ function insertPropertyAt(content: string, openBrace: number, property: string):
     .join("\n");
   const trailingLine = safeBody.slice(safeBody.lastIndexOf("\n") + 1);
   const separator =
-    safeBody.length === 0 ||
-    safeBody.endsWith(",") ||
-    arrayCommentStart(trailingLine) >= 0
+    safeBody.length === 0 || safeBody.endsWith(",") || arrayCommentStart(trailingLine) >= 0
       ? ""
       : ",";
   const prefix = content.slice(0, openBrace + 1) + safeBody + separator + "\n";
@@ -1456,10 +1453,6 @@ function uniqueJsonValues(values: readonly JsonValue[]): JsonValue[] {
     result.push(value);
   }
   return result;
-}
-
-function asJsonObject(value: JsonValue | undefined): JsonObject {
-  return isJsonObject(value) ? value : {};
 }
 
 function asJsonArray(value: JsonValue | undefined): JsonValue[] {

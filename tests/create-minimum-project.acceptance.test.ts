@@ -678,10 +678,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         extends: { id: string }[];
         rules: Record<string, string>;
       }>(await readFile(join(project, "oxlint.config.ts"), "utf8"));
-      expect(config.extends.map(({ id }) => id)).toEqual([
-        "ultracite-core",
-        "ultracite-anti-slop",
-      ]);
+      expect(config.extends.map(({ id }) => id)).toEqual(["ultracite-core", "ultracite-anti-slop"]);
       expect(config.rules).toEqual({ "no-alert": "warn" });
     });
 

@@ -174,6 +174,24 @@ describe("generateProject", () => {
     expect(result.files).toContain("package.json");
   });
 
+  it("preserves an existing package test script", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "package.json"),
+      `${JSON.stringify({ name: "existing", scripts: { test: "vitest run" } }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await mergeProject({ targetDirectory, selection: createFeatureSelection(["vitest"]) });
+
+    const packageJson = JSON.parse(
+      await readFile(join(targetDirectory, "package.json"), "utf8"),
+    ) as {
+      scripts: Record<string, string>;
+    };
+    expect(packageJson.scripts.test).toBe("vitest run");
+  });
+
   it("merges structured configuration and is idempotent", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
@@ -225,10 +243,7 @@ describe("generateProject", () => {
     expect(tsconfig.compilerOptions.paths["@/*"]).toEqual(["src/*"]);
     expect(tsconfig.include).toEqual(["src/**/*.ts", "tests/**/*.ts", "custom/**/*.ts"]);
     expect(oxlint.rules).toEqual({ "no-alert": "warn" });
-    expect(oxlint.extends.map(({ id }) => id)).toEqual([
-      "ultracite-core",
-      "ultracite-anti-slop",
-    ]);
+    expect(oxlint.extends.map(({ id }) => id)).toEqual(["ultracite-core", "ultracite-anti-slop"]);
     expect(workflow.triggers).toEqual(
       expect.objectContaining({ pull_request: {}, push: { branches: ["develop", "main"] } }),
     );
@@ -296,7 +311,7 @@ describe("generateProject", () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
       join(targetDirectory, "vitest.config.ts"),
-      'import { defineConfig } from "vitest/config";\n\nexport default defineConfig({\n  test: { include: [\'tests/**/*.test.ts\', \'tests,unit/**/*.ts\'] },\n});\n',
+      "import { defineConfig } from \"vitest/config\";\n\nexport default defineConfig({\n  test: { include: ['tests/**/*.test.ts', 'tests,unit/**/*.ts'] },\n});\n",
       "utf8",
     );
 
@@ -321,13 +336,10 @@ describe("generateProject", () => {
       selection: createFeatureSelection(["eslint", "ultracite"]),
     });
 
-    const config = evaluateGeneratedModule<
-      { rules: Record<string, string> }[]
-    >(await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"));
-    expect(config).toEqual([
-      { rules: { "no-alert": "warn" } },
-      { id: "eslint-core" },
-    ]);
+    const config = evaluateGeneratedModule<{ rules: Record<string, string> }[]>(
+      await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"),
+    );
+    expect(config).toEqual([{ rules: { "no-alert": "warn" } }, { id: "eslint-core" }]);
   });
 
   it("reports a scalar linter array collision before writing", async () => {
@@ -693,6 +705,23 @@ describe("generateProject", () => {
     }>(await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"));
     expect(config.jsPlugins.map(({ name }) => name)).toEqual(["anti-slop"]);
     expect(config.overrides[0]?.jsPlugins).toEqual([]);
+  });
+
+  it("reports a plugin source collision before writing", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\n\nexport default defineConfig({\n  jsPlugins: [{ name: "anti-slop", specifier: "./custom.ts" }],\n});\n',
+      "utf8",
+    );
+
+    await expect(
+      mergeProject({
+        targetDirectory,
+        selection: createFeatureSelection(["oxlint", "anti-slop"]),
+      }),
+    ).rejects.toThrow("oxlint.config.ts.jsPlugins.anti-slop.specifier");
+    await expect(readFile(join(targetDirectory, "package.json"), "utf8")).rejects.toThrow();
   });
 
   it("adds top-level ignore patterns beside nested settings", async () => {
