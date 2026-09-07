@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.2.0...create-agent-stack-v1.3.0) (2026-09-07)
+
+
+### Features
+
+* add semantic project merge ([#7](https://github.com/TiagoJacinto/agent-stack/issues/7)) ([e00b96e](https://github.com/TiagoJacinto/agent-stack/commit/e00b96e2d961098fe6228eff2abcb186809ee351))
+
 ## [1.2.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.1.1...create-agent-stack-v1.2.0) (2026-09-01)
 
 
