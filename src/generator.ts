@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import type { FeatureSelection } from "./catalog.js";
@@ -124,6 +124,9 @@ async function assertSafeDestination(
   const root = await lstat(directory);
   if (root.isSymbolicLink()) {
     throw new Error(`Template path uses a symlinked project directory: ${directory}`);
+  }
+  if ((await realpath(directory)) !== directory) {
+    throw new Error(`Template path uses a symlinked ancestor: ${relativePath}`);
   }
 
   let current = directory;

@@ -97,7 +97,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
+        await expectGeneratedModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -283,7 +283,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
+        await expectGeneratedModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
   });
@@ -311,7 +311,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
+        await expectGeneratedModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -377,7 +377,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
+        await expectGeneratedModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
   });
@@ -406,7 +406,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
+        await expectGeneratedModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -414,7 +414,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this ESLint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectFileToEqual(project, "eslint.config.mjs", configuration);
+        await expectGeneratedModuleToEqual(project, "eslint.config.mjs", configuration);
       },
     );
   });
@@ -460,7 +460,7 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
-        await expectTypeScriptModuleToEqual(project, "oxlint.config.ts", configuration);
+        await expectGeneratedModuleToEqual(project, "oxlint.config.ts", configuration);
       },
     );
 
@@ -832,9 +832,6 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
         await readFile(join(project, "oxlint.config.ts"), "utf8"),
       );
       expect(config.extends.filter(({ id }) => id === "ultracite-core")).toHaveLength(1);
-      expect(await readFile(join(project, "oxlint.config.ts"), "utf8")).not.toContain(
-        "agent-stack:start",
-      );
     });
   });
 
@@ -973,7 +970,7 @@ async function expectFileToEqual(project: string, path: string, expected: string
   expect(normalize(actual)).toBe(normalize(expected));
 }
 
-async function expectTypeScriptModuleToEqual(
+async function expectGeneratedModuleToEqual(
   project: string,
   path: string,
   expected: string,

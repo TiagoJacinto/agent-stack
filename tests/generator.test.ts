@@ -375,6 +375,19 @@ describe("generateProject", () => {
     );
     await expect(readFile(outsideManifest, "utf8")).resolves.toBe('{"owned":"outside"}\n');
   });
+
+  it("refuses a merge target reached through a symlinked ancestor", async () => {
+    const workspace = await createTemporaryDirectory();
+    const outsideDirectory = await createTemporaryDirectory();
+    const linkedParent = join(workspace, "linked-parent");
+    const targetDirectory = join(linkedParent, "project");
+    await symlink(outsideDirectory, linkedParent);
+    await mkdir(targetDirectory);
+
+    await expect(mergeProject({ targetDirectory, selection: minimumSelection })).rejects.toThrow(
+      "Template path uses a symlinked ancestor",
+    );
+  });
 });
 
 async function createTemporaryDirectory(): Promise<string> {
