@@ -8,6 +8,7 @@ import { createFeatureSelection, lowSelection, minimumSelection } from "../src/c
 import { generateProject, mergeProject } from "../src/generator.js";
 import {
   evaluateGeneratedModule,
+  generatedConfigModules,
   parseWorkflow,
 } from "./artifact-semantics.js";
 
@@ -362,6 +363,44 @@ describe("generateProject", () => {
     ).rejects.toThrow("oxlint.config.ts:import core");
   });
 
+  it("recognizes default and named bindings in one import", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import custom, { defineConfig } from "oxlint";\n\nexport default defineConfig({});\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+      await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"),
+    );
+    expect(config.extends.map(({ id }) => id)).toEqual(["ultracite-core"]);
+  });
+
+  it("merges quoted configuration keys", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "oxlint.config.ts"),
+      'import { defineConfig } from "oxlint";\nimport custom from "custom";\n\nexport default defineConfig({ "extends": [custom] });\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["oxlint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<{ extends: { id: string }[] }>(
+      await readFile(join(targetDirectory, "oxlint.config.ts"), "utf8"),
+    );
+    expect(config.extends.map(({ id }) => id)).toEqual(["custom-eslint", "ultracite-core"]);
+  });
+
   it("merges Vitest includes within the test configuration", async () => {
     const targetDirectory = await createTemporaryDirectory();
     await writeFile(
@@ -415,6 +454,52 @@ describe("generateProject", () => {
       await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
     );
     expect(workflow.triggers.push).toEqual({ branches: ["develop", "main"] });
+  });
+
+  it("normalizes flow-style workflow triggers before merging", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await mkdir(join(targetDirectory, ".github/workflows"), { recursive: true });
+    await writeFile(
+      join(targetDirectory, ".github/workflows/ci.yml"),
+      "name: Existing CI\n\non: [push]\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo build\n",
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["github-actions"]),
+    });
+
+    const workflow = parseWorkflow(
+      await readFile(join(targetDirectory, ".github/workflows/ci.yml"), "utf8"),
+    );
+    expect(workflow.triggers).toEqual(
+      expect.objectContaining({ pull_request: {}, push: { branches: ["main"] } }),
+    );
+  });
+
+  it("preserves semicolons inside ESLint export strings", async () => {
+    const targetDirectory = await createTemporaryDirectory();
+    await writeFile(
+      join(targetDirectory, "eslint.config.mjs"),
+      'import defineConfig from "custom";\n\nexport default defineConfig({ ignores: ["dist;generated/**"] });\n',
+      "utf8",
+    );
+
+    await mergeProject({
+      targetDirectory,
+      selection: createFeatureSelection(["eslint", "ultracite"]),
+    });
+
+    const config = evaluateGeneratedModule<[{ ignores: string[] }, { id: string }]>(
+      await readFile(join(targetDirectory, "eslint.config.mjs"), "utf8"),
+      {
+        ...generatedConfigModules,
+        custom: { default: (value: unknown): unknown => value },
+      },
+    );
+    expect(config[0].ignores).toEqual(["dist;generated/**"]);
+    expect(config[1].id).toBe("eslint-core");
   });
 
   it("reports every conflicting managed path before writing files", async () => {

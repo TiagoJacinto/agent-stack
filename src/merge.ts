@@ -352,6 +352,8 @@ function mergeObjectConfig(existingContent: string, generatedContent: string): R
 
 function mergeWorkflow(existingContent: string, generatedContent: string): string {
   let lines = existingContent.split("\n");
+  const existingOn = yamlSections(lines.join("\n"), 0).find((section) => section.name === "on");
+  if (existingOn !== undefined) lines = normalizeFlowWorkflowTriggers(lines, existingOn);
   for (const section of yamlSections(generatedContent, 0)) {
     if (section.name === "name") continue;
     const existingSection = yamlSections(lines.join("\n"), 0).find(
@@ -371,6 +373,27 @@ function mergeWorkflow(existingContent: string, generatedContent: string): strin
     }
   }
   return lines.join("\n");
+}
+
+function normalizeFlowWorkflowTriggers(lines: string[], section: YamlSection): string[] {
+  const line = lines[section.start] ?? "";
+  const match = /^on:\s*(\[[^\]]*\]|[^\s#]+)\s*$/.exec(line);
+  if (match === null) return lines;
+  const value = match[1] ?? "";
+  const triggers = value.startsWith("[")
+    ? value
+        .slice(1, -1)
+        .split(",")
+        .map((trigger) => trigger.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean)
+    : [value.replace(/^["']|["']$/g, "")];
+  const indentation = line.slice(0, line.indexOf("on:"));
+  const replacement = [
+    `${indentation}on:`,
+    ...triggers.map((trigger) => `${indentation}  ${trigger}:`),
+  ];
+  lines.splice(section.start, section.end - section.start, ...replacement);
+  return lines;
 }
 
 type YamlSection = {
@@ -648,19 +671,38 @@ function importBindings(line: string): readonly ImportBinding[] {
   if (match === null) return [];
   const clause = match[1]?.trim() ?? "";
   const source = match[2] ?? "";
-  if (clause.startsWith("{")) {
-    return clause
-      .slice(1, clause.lastIndexOf("}"))
+  const namedStart = clause.indexOf("{");
+  if (namedStart >= 0) {
+    const defaultClause = clause.slice(0, namedStart).replace(/,\s*$/, "").trim();
+    const namedClause = clause.slice(namedStart + 1, clause.lastIndexOf("}"));
+    const bindings: ImportBinding[] = defaultClause.length > 0
+      ? [{ local: defaultClause, source }]
+      : [];
+    return [
+      ...bindings,
+      ...namedClause
       .split(",")
       .map((entry) => entry.trim())
       .filter(Boolean)
       .map((entry) => {
         const parts = entry.split(/\s+as\s+/);
         return { local: (parts[1] ?? parts[0] ?? "").trim(), source };
-      });
+      }),
+    ];
   }
   if (clause.startsWith("* as ")) return [{ local: clause.slice(5).trim(), source }];
-  return [{ local: (clause.split(",")[0] ?? "").trim(), source }];
+  const comma = clause.indexOf(",");
+  if (comma >= 0) {
+    const defaultBinding = clause.slice(0, comma).trim();
+    const remainder = clause.slice(comma + 1).trim();
+    return [
+      { local: defaultBinding, source },
+      ...(remainder.startsWith("* as ")
+        ? [{ local: remainder.slice(5).trim(), source }]
+        : []),
+    ];
+  }
+  return [{ local: clause, source }];
 }
 
 function arrayEntries(content: string, property: string): string[] {
@@ -730,12 +772,14 @@ function topLevelProperty(
   let cursor = objectOpen + 1;
   while (cursor < objectClose) {
     while (cursor < objectClose && /\s|,/.test(content[cursor] ?? "")) cursor += 1;
-    const keyMatch = /^([A-Za-z_$][\w$]*)\s*:/.exec(content.slice(cursor));
+    const keyMatch = /^(?:(['"])(.*?)\1|([A-Za-z_$][\w$]*))\s*:/.exec(
+      content.slice(cursor),
+    );
     if (keyMatch === null) {
       cursor += 1;
       continue;
     }
-    const key = keyMatch[1] ?? "";
+    const key = keyMatch[2] ?? keyMatch[3] ?? "";
     const valueStart = cursor + keyMatch[0].length;
     const valueEnd = expressionEnd(content, valueStart, objectClose);
     if (key === property) {
@@ -940,15 +984,43 @@ function defaultExportExpression(content: string): DefaultExportExpression | und
     };
   }
 
-  const semicolon = content.indexOf(";", cursor);
-  const newline = content.indexOf("\n", cursor);
-  const expressionEnd =
-    semicolon < 0 ? (newline < 0 ? content.length : newline) : semicolon;
+  const expressionEnd = defaultExportStatementEnd(content, cursor);
   return {
     start: exportMatch.index,
-    end: semicolon < 0 ? expressionEnd : semicolon + 1,
+    end: content[expressionEnd] === ";" ? expressionEnd + 1 : expressionEnd,
     expression: content.slice(cursor, expressionEnd).trim(),
   };
+}
+
+function defaultExportStatementEnd(content: string, start: number): number {
+  let curlyDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote = "";
+  let escaped = false;
+  for (let index = start; index < content.length; index += 1) {
+    const character = content[index];
+    if (quote.length > 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") curlyDepth += 1;
+    if (character === "}") curlyDepth -= 1;
+    if (character === "[") bracketDepth += 1;
+    if (character === "]") bracketDepth -= 1;
+    if (character === "(") parenDepth += 1;
+    if (character === ")") parenDepth -= 1;
+    if (curlyDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
+      if (character === ";" || character === "\n") return index;
+    }
+  }
+  return content.length;
 }
 
 function insertConfigProperty(content: string, property: string): string {
