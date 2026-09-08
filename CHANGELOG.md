@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.4.2...create-agent-stack-v1.5.0) (2026-09-08)
+
+
+### Features
+
+* add Bun package manager support ([#13](https://github.com/TiagoJacinto/agent-stack/issues/13)) ([a7f7817](https://github.com/TiagoJacinto/agent-stack/commit/a7f7817e79a64f18663564a89970bc15e9966e16))
+
 ## [1.4.2](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.4.1...create-agent-stack-v1.4.2) (2026-09-08)
 
 
