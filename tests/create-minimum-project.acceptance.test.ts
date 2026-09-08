@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { expect } from "vitest";
 
-import { featureCatalog } from "../src/catalog.js";
+import { featureCatalog, presetSelection, shippingGates, type Preset } from "../src/catalog.js";
 import { evaluateGeneratedModule, parseWorkflow } from "./artifact-semantics.js";
 
 const executeFile = promisify(execFile);
@@ -35,7 +35,7 @@ type ProcessResult = {
   readonly stderr: string;
 };
 
-describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
+describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
   let workspace: string | undefined;
   let generatedProject: string | undefined;
   let failedOutput: ProcessResult | undefined;
@@ -94,6 +94,17 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
     });
 
     And(
+      "its shipping gates require successful build, formatting, linting, type checking, existing tests, secret scanning, dependency auditing, a narrow change scope, and a basic agent compute budget",
+      async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const policy = await readJson<{ gates: string[] }>(
+          join(project, ".agent-stack/shipping-gates.json"),
+        );
+        expect(policy.gates).toEqual(shippingGates(presetSelection("minimum")));
+      },
+    );
+
+    And(
       "the generated project contains this Oxlint configuration:",
       async (_context, configuration: string) => {
         const project = requireState(generatedProject, "The project was not generated.");
@@ -106,6 +117,121 @@ describeFeature(feature, ({ Scenario, AfterEachScenario }) => {
       await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "install"], project);
       await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
     });
+  });
+
+  ScenarioOutline(
+    "Generate a project with a progressively stronger shipping preset",
+    ({ Given, When, Then, And }, example) => {
+      Given("an empty workspace for a new project", async () => {
+        workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+      });
+
+      When("I create {string} with the {string} preset", async () => {
+        const currentWorkspace = requireState(workspace, "The workspace was not created.");
+        generatedProject = join(currentWorkspace, example.project);
+        await run(
+          process.execPath,
+          [
+            resolve("dist/cli.js"),
+            "create",
+            example.project,
+            "--preset",
+            example.preset.toLowerCase(),
+          ],
+          currentWorkspace,
+        );
+      });
+
+      Then("the generated project records the {string} preset selection", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const manifest = await readJson<{ preset: string }>(
+          join(project, ".agent-stack/manifest.json"),
+        );
+        expect(manifest.preset).toBe(example.preset.toLowerCase());
+      });
+
+      And("its shipping gates include every gate from the {string} preset", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const policy = await readJson<{ gates: string[] }>(
+          join(project, ".agent-stack/shipping-gates.json"),
+        );
+        expect(policy.gates).toEqual(
+          expect.arrayContaining([
+            ...shippingGates(presetSelection(example["previous preset"].toLowerCase() as Preset)),
+          ]),
+        );
+      });
+
+      And("its shipping gates add:", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const policy = await readJson<{ gates: string[] }>(
+          join(project, ".agent-stack/shipping-gates.json"),
+        );
+        expect(policy.gates).toEqual(
+          expect.arrayContaining([
+            example["added gate 1"],
+            example["added gate 2"],
+            example["added gate 3"],
+          ]),
+        );
+      });
+
+      And("it requires {string}", async () => assertShippingGate(example["added gate 1"]));
+      And("it additionally requires {string}", async () =>
+        assertShippingGate(example["added gate 2"]),
+      );
+      And("it finally requires {string}", async () => assertShippingGate(example["added gate 3"]));
+
+      async function assertShippingGate(gate: string): Promise<void> {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const policy = await readJson<{ gates: string[] }>(
+          join(project, ".agent-stack/shipping-gates.json"),
+        );
+        expect(policy.gates).toContain(gate);
+      }
+
+      And("installing dependencies and running the project checks succeeds", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "install"], project);
+        await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
+      });
+    },
+  );
+
+  Scenario("Recommend Medium as the default shipping preset", ({ Given, When, Then, And }) => {
+    Given("an empty workspace for a new project", async () => {
+      workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+    });
+
+    When("I create {string} with the Medium preset", async (_context, projectName: string) => {
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      generatedProject = join(currentWorkspace, projectName);
+      await run(
+        process.execPath,
+        [resolve("dist/cli.js"), "create", projectName, "--preset", "medium"],
+        currentWorkspace,
+      );
+    });
+
+    Then("the generated project records the Medium preset selection", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      const manifest = await readJson<{ preset: string }>(
+        join(project, ".agent-stack/manifest.json"),
+      );
+      expect(manifest.preset).toBe("medium");
+    });
+
+    And(
+      "the generated project documentation identifies Medium as the default production recommendation",
+      async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        await expectFileToContain(
+          project,
+          "README.md",
+          "Medium is the default recommendation for production projects.",
+        );
+      },
+    );
   });
 
   Scenario(
@@ -907,6 +1033,7 @@ async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
     "oxlint.config.ts",
     ".github/workflows/ci.yml",
     ".gitleaks.toml",
+    ".agent-stack/shipping-gates.json",
   ]);
 
   return [
@@ -930,6 +1057,10 @@ async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
     {
       capability: "automated protection",
       "configured tool or artifact": "GitHub Actions, gitleaks, and dependency auditing",
+    },
+    {
+      capability: "quality policy",
+      "configured tool or artifact": "Minimum deterministic shipping gates and agent budget",
     },
   ];
 }

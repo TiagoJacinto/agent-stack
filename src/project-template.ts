@@ -1,4 +1,4 @@
-import type { FeatureId, FeatureSelection } from "./catalog.js";
+import { shippingGates, type FeatureId, type FeatureSelection } from "./catalog.js";
 import { antiSlopAssets } from "./anti-slop-assets.js";
 
 const eslintSupportDependencies = {
@@ -53,6 +53,10 @@ export function projectFiles(
     "README.md": projectReadme(projectName, selection),
     ".agent-stack/manifest.json": manifest(selection),
   };
+
+  if (selection.mode === "preset") {
+    files[".agent-stack/shipping-gates.json"] = shippingGatePolicy(selection);
+  }
 
   if (has(selection, "oxlint")) {
     files["oxlint.config.ts"] = oxlintConfig(selection);
@@ -280,10 +284,10 @@ function vitestConfig(): string {
 function strykerConfig(): string {
   return text`
     export default {
-      testRunner: "vitest",
+      mutate: ["src/**/*.ts"],
       plugins: ["@stryker-mutator/vitest-runner"],
       reporters: ["clear-text", "html"],
-      mutate: ["src/**/*.ts"],
+      testRunner: "vitest",
     };
   `;
 }
@@ -349,6 +353,14 @@ function githubWorkflow(selection: FeatureSelection): string {
   return `${lines.join("\n")}\n`;
 }
 
+function shippingGatePolicy(selection: Extract<FeatureSelection, { mode: "preset" }>): string {
+  return json({
+    preset: selection.preset,
+    recommendation: selection.preset === "medium" ? "default-production" : undefined,
+    gates: shippingGates(selection),
+  });
+}
+
 function projectReadme(projectName: string, selection: FeatureSelection): string {
   const origin =
     selection.mode === "preset"
@@ -381,6 +393,11 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
     ## Commands
 
     ${commands}
+
+    ## Shipping policy
+
+    ${selection.mode === "preset" ? `This project uses the ${selection.preset} shipping preset. Review \`.agent-stack/shipping-gates.json\` before declaring a change shippable.` : "Select a shipping preset when the project needs a defined release gate."}
+    ${selection.mode === "preset" && selection.preset === "medium" ? "Medium is the default recommendation for production projects." : ""}
 
     Add capabilities progressively and record each addition in \`.agent-stack/manifest.json\`.
   `;

@@ -1,7 +1,7 @@
 # create-agent-stack
 
 `create-agent-stack` progressively scaffolds verified, agent-ready TypeScript projects.
-The first milestone supports the Minimum and Low presets plus individual feature selection.
+The preset ladder supports Minimum, Low, Medium, High, and Maximum, plus individual feature selection.
 
 ## Development
 
@@ -12,7 +12,7 @@ The first milestone supports the Minimum and Low presets plus individual feature
 ## Current usage
 
 1. Build with `bun run build`.
-2. Run `node dist/cli.js create my-project --preset minimum` for the complete Minimum setup, `node dist/cli.js create my-project --preset low` for Minimum plus property-based and mutation testing, or omit `--preset` to choose features interactively.
+2. Run `node dist/cli.js create my-project --preset <level>`, where `<level>` is `minimum`, `low`, `medium`, `high`, or `maximum`. Omit `--preset` to choose individual features interactively.
 3. To add capabilities to an existing project, run `node dist/cli.js merge path/to/project --preset minimum` (or omit `--preset` to choose features interactively).
 4. Enter the project directory, install dependencies, and run `pnpm check`.
 
@@ -21,6 +21,8 @@ The published commands are `pnpm dlx @tiagojacinto/create-agent-stack create my-
 When `--preset` is omitted, the CLI asks about each top-level optional feature: formatting, linting, ESLint, Ultracite, unit testing, agent context, GitHub Actions, secret scanning, dependency auditing, and mutation testing. Selecting Vitest reveals property-based testing, selecting Oxlint reveals Anti-slop, and selecting Anti-slop reveals Anti-slop Effect. Type `y` to include a feature. TypeScript, Node.js, pnpm, and the core scripts are always included. Selecting a feature also selects its dependencies; for example, secret scanning includes GitHub Actions and Anti-slop includes Oxlint.
 
 If Ultracite is selected without a linter, the CLI asks which backend to add after the feature questions. Oxlint is the default. If Oxlint or ESLint was already selected, that choice becomes Ultracite's backend without another question. Selecting both generates both configurations. Oxlint and Ultracite use one composed `oxlint.config.ts` file. Anti-slop without Ultracite vendors the plugin under `tools/oxlint/anti-slop/`. If Ultracite and Anti-slop Effect are selected together, the CLI warns that the Effect extension is unsupported and asks for confirmation before continuing.
+
+Every preset generates `.agent-stack/shipping-gates.json`, a cumulative release policy for coding agents. Minimum establishes the build, formatting, linting, type-checking, test, secret-scanning, dependency-audit, narrow-scope, and compute-budget floor. Medium is the default recommendation for production projects. High adds the available property-based and mutation-testing tooling; Maximum records the additional independent-review and high-assurance gates. The generated README directs agents to review this policy before declaring code shippable.
 
 The generated project continues to use pnpm, regardless of the package manager used to run this scaffolder.
 

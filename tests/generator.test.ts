@@ -4,7 +4,15 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createFeatureSelection, lowSelection, minimumSelection } from "../src/catalog.js";
+import {
+  createFeatureSelection,
+  highSelection,
+  lowSelection,
+  maximumSelection,
+  mediumSelection,
+  minimumSelection,
+  shippingGates,
+} from "../src/catalog.js";
 import { generateProject, mergeProject } from "../src/generator.js";
 import {
   evaluateGeneratedModule,
@@ -45,7 +53,7 @@ describe("generateProject", () => {
     );
   });
 
-  it("generates the Low preset with mutation testing", async () => {
+  it("generates the Low preset with routine internal shipping gates", async () => {
     const workspace = await createTemporaryDirectory();
     const targetDirectory = join(workspace, "Low Project");
 
@@ -60,26 +68,42 @@ describe("generateProject", () => {
 
     expect(manifest.preset).toBe("low");
     expect(manifest.features).toEqual(
-      expect.arrayContaining([
-        "vitest",
-        "property-testing",
-        "mutation-testing",
-        "gitleaks",
-        "dependency-audit",
-      ]),
+      expect.arrayContaining(["vitest", "gitleaks", "dependency-audit"]),
     );
-    expect(packageJson.devDependencies).toHaveProperty("@fast-check/vitest");
-    expect(packageJson.devDependencies).toHaveProperty("fast-check");
-    expect(packageJson.devDependencies).toHaveProperty("@stryker-mutator/core");
-    expect(packageJson.devDependencies).toHaveProperty("@stryker-mutator/vitest-runner");
-    expect(packageJson.scripts.mutation).toBe("stryker run");
-    expect(result.files).toContain("stryker.config.mjs");
-    const stryker = evaluateGeneratedModule<{
-      testRunner: string;
-      plugins: string[];
-    }>(await readFile(join(targetDirectory, "stryker.config.mjs"), "utf8"));
-    expect(stryker.testRunner).toBe("vitest");
-    expect(stryker.plugins).toContain("@stryker-mutator/vitest-runner");
+    expect(packageJson.devDependencies).not.toHaveProperty("@fast-check/vitest");
+    expect(packageJson.devDependencies).not.toHaveProperty("@stryker-mutator/core");
+    expect(packageJson.scripts).not.toHaveProperty("mutation");
+    expect(result.files).not.toContain("stryker.config.mjs");
+    const policy = JSON.parse(
+      await readFile(join(targetDirectory, ".agent-stack/shipping-gates.json"), "utf8"),
+    ) as { gates: string[] };
+    expect(policy.gates).toEqual(shippingGates(lowSelection));
+  });
+
+  it("generates Medium, High, and Maximum with cumulative gate policies", async () => {
+    const workspace = await createTemporaryDirectory();
+    const selections = [mediumSelection, highSelection, maximumSelection] as const;
+
+    for (const selection of selections) {
+      const targetDirectory = join(workspace, selection.preset);
+      await generateProject({ targetDirectory, selection });
+      const policy = JSON.parse(
+        await readFile(join(targetDirectory, ".agent-stack/shipping-gates.json"), "utf8"),
+      ) as { preset: string; recommendation?: string; gates: string[] };
+
+      expect(policy.preset).toBe(selection.preset);
+      expect(policy.gates).toEqual(shippingGates(selection));
+      if (selection.preset === "medium") {
+        expect(policy.recommendation).toBe("default-production");
+      }
+    }
+
+    const highPackage = JSON.parse(
+      await readFile(join(workspace, "high", "package.json"), "utf8"),
+    ) as { devDependencies: Record<string, string>; scripts: Record<string, string> };
+    expect(highPackage.devDependencies).toHaveProperty("@fast-check/vitest");
+    expect(highPackage.devDependencies).toHaveProperty("@stryker-mutator/core");
+    expect(highPackage.scripts.mutation).toBe("stryker run");
   });
 
   it("resolves dependencies and omits unselected optional features", async () => {

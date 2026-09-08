@@ -13,7 +13,9 @@ Feature: Create an agent stack project
       | scripts              | dev, build, test, and check                       |
       | agent context        | README, AGENTS, glossary, and progress manifest   |
       | automated protection | GitHub Actions, gitleaks, and dependency auditing |
+      | quality policy       | Minimum deterministic shipping gates and agent budget |
     And the generated project records the Minimum preset selection
+    And its shipping gates require successful build, formatting, linting, type checking, existing tests, secret scanning, dependency auditing, a narrow change scope, and a basic agent compute budget
     And the generated project contains this Oxlint configuration:
       """ts
       import { defineConfig } from "oxlint";
@@ -26,6 +28,34 @@ Feature: Create an agent stack project
       });
       """
     And installing dependencies and running the project checks succeeds
+
+  Scenario Outline: Generate a project with a progressively stronger shipping preset
+    Given an empty workspace for a new project
+    When I create "<project>" with the "<preset>" preset
+    Then the generated project records the "<preset>" preset selection
+    And its shipping gates include every gate from the "<previous preset>" preset
+    And its shipping gates add:
+      | gate |
+      | <added gate 1> |
+      | <added gate 2> |
+      | <added gate 3> |
+    And it requires "<added gate 1>"
+    And it additionally requires "<added gate 2>"
+    And it finally requires "<added gate 3>"
+    And installing dependencies and running the project checks succeeds
+
+    Examples:
+      | project         | preset  | previous preset | added gate 1                                              | added gate 2                                            | added gate 3                                        |
+      | low-project     | Low     | Minimum         | changed-behavior unit tests                               | basic input and error handling                           | dead-code and simple complexity/file-size limits   |
+      | medium-project  | Medium  | Low             | changed-code coverage, SAST, and contract checks          | UI accessibility and performance smoke tests             | duplication limits and reviewable diff explanation |
+      | high-project    | High    | Medium          | property tests and mutation testing for critical modules  | end-to-end, load, failure, retry, and concurrency tests  | WCAG, license/SBOM, architecture, and strict complexity checks |
+      | maximum-project | Maximum | High            | adversarial trust-boundary fuzzing and DAST checks        | stress/soak, compatibility-matrix, and chaos checks      | provenance/signing, critical-surface reviews, formal verification where justified, and independent approval |
+
+  Scenario: Recommend Medium as the default shipping preset
+    Given an empty workspace for a new project
+    When I create "medium-project" with the Medium preset
+    Then the generated project records the Medium preset selection
+    And the generated project documentation identifies Medium as the default production recommendation
 
   Scenario: Select individual features when no preset is supplied
     Given an empty workspace for a new project

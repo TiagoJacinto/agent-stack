@@ -8,8 +8,8 @@ import {
   createFeatureSelection,
   featureCatalog,
   linterFeatures,
-  lowSelection,
-  minimumSelection,
+  presetSelection,
+  presets,
   omitFeatures,
   selectionWarnings,
   type LinterFeatureId,
@@ -44,9 +44,7 @@ async function main(): Promise<void> {
     }
 
     const requestedSelection =
-      options.preset === undefined
-        ? await promptForFeatures(input)
-        : presetSelection(options.preset);
+      options.preset === undefined ? await promptForFeatures(input) : selectPreset(options.preset);
     const selection = await confirmSelectionWarnings(input, requestedSelection);
     const result =
       options.command === "create"
@@ -98,10 +96,11 @@ function parseArguments(arguments_: readonly string[]): CliOptions {
   return { command, targetDirectory, preset };
 }
 
-function presetSelection(value: string) {
-  if (value === "minimum") return minimumSelection;
-  if (value === "low") return lowSelection;
-  throw new Error(`Unknown preset "${value}". Available presets: minimum, low.`);
+function selectPreset(value: string) {
+  if ((presets as readonly string[]).includes(value)) {
+    return presetSelection(value as (typeof presets)[number]);
+  }
+  throw new Error(`Unknown preset "${value}". Available presets: ${presets.join(", ")}.`);
 }
 
 function capitalize(value: string): string {
@@ -153,7 +152,7 @@ async function promptForFeature(
 
 async function confirmSelectionWarnings(
   input: InputReader,
-  selection: ReturnType<typeof createFeatureSelection> | ReturnType<typeof presetSelection>,
+  selection: ReturnType<typeof createFeatureSelection> | ReturnType<typeof selectPreset>,
 ) {
   const warnings = selectionWarnings(selection);
   if (warnings.length === 0) return selection;

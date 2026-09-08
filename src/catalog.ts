@@ -1,4 +1,4 @@
-export const presets = ["minimum", "low"] as const;
+export const presets = ["minimum", "low", "medium", "high", "maximum"] as const;
 
 export type Preset = (typeof presets)[number];
 
@@ -64,6 +64,8 @@ export interface CustomFeatureSelection {
 
 export type FeatureSelection = PresetFeatureSelection | CustomFeatureSelection;
 
+export type ShippingGate = string;
+
 export interface SelectionWarning {
   readonly id: "ultracite-anti-slop-effect";
   readonly message: string;
@@ -82,11 +84,96 @@ const minimumFeatures: readonly OptionalFeatureId[] = [
   "dependency-audit",
 ];
 
-const lowFeatures: readonly OptionalFeatureId[] = [
-  ...minimumFeatures,
+const lowFeatures: readonly OptionalFeatureId[] = [...minimumFeatures];
+
+const highFeatures: readonly OptionalFeatureId[] = [
+  ...lowFeatures,
   "property-testing",
   "mutation-testing",
 ];
+
+const shippingGatesByPreset: Readonly<Record<Preset, readonly ShippingGate[]>> = {
+  minimum: [
+    "successful build",
+    "formatting and linting",
+    "type checking",
+    "existing tests",
+    "secret scanning",
+    "dependency auditing",
+    "narrow change scope",
+    "basic agent compute budget",
+  ],
+  low: [
+    "successful build",
+    "formatting and linting",
+    "type checking",
+    "existing tests",
+    "secret scanning",
+    "dependency auditing",
+    "narrow change scope",
+    "basic agent compute budget",
+    "changed-behavior unit tests",
+    "basic input and error handling",
+    "dead-code and simple complexity/file-size limits",
+  ],
+  medium: [
+    "successful build",
+    "formatting and linting",
+    "type checking",
+    "existing tests",
+    "secret scanning",
+    "dependency auditing",
+    "narrow change scope",
+    "basic agent compute budget",
+    "changed-behavior unit tests",
+    "basic input and error handling",
+    "dead-code and simple complexity/file-size limits",
+    "changed-code coverage, SAST, and contract checks",
+    "UI accessibility and performance smoke tests",
+    "duplication limits and reviewable diff explanation",
+  ],
+  high: [
+    "successful build",
+    "formatting and linting",
+    "type checking",
+    "existing tests",
+    "secret scanning",
+    "dependency auditing",
+    "narrow change scope",
+    "basic agent compute budget",
+    "changed-behavior unit tests",
+    "basic input and error handling",
+    "dead-code and simple complexity/file-size limits",
+    "changed-code coverage, SAST, and contract checks",
+    "UI accessibility and performance smoke tests",
+    "duplication limits and reviewable diff explanation",
+    "property tests and mutation testing for critical modules",
+    "end-to-end, load, failure, retry, and concurrency tests",
+    "WCAG, license/SBOM, architecture, and strict complexity checks",
+  ],
+  maximum: [
+    "successful build",
+    "formatting and linting",
+    "type checking",
+    "existing tests",
+    "secret scanning",
+    "dependency auditing",
+    "narrow change scope",
+    "basic agent compute budget",
+    "changed-behavior unit tests",
+    "basic input and error handling",
+    "dead-code and simple complexity/file-size limits",
+    "changed-code coverage, SAST, and contract checks",
+    "UI accessibility and performance smoke tests",
+    "duplication limits and reviewable diff explanation",
+    "property tests and mutation testing for critical modules",
+    "end-to-end, load, failure, retry, and concurrency tests",
+    "WCAG, license/SBOM, architecture, and strict complexity checks",
+    "adversarial trust-boundary fuzzing and DAST checks",
+    "stress/soak, compatibility-matrix, and chaos checks",
+    "provenance/signing, critical-surface reviews, formal verification where justified, and independent approval",
+  ],
+};
 
 export const minimumSelection: PresetFeatureSelection = {
   mode: "preset",
@@ -96,13 +183,48 @@ export const minimumSelection: PresetFeatureSelection = {
   omitted: [],
 };
 
-export const lowSelection: PresetFeatureSelection = {
-  mode: "preset",
-  preset: "low",
-  requested: lowFeatures,
-  features: resolveFeatures(lowFeatures),
-  omitted: [],
-};
+export const lowSelection: PresetFeatureSelection = makePresetSelection("low", lowFeatures);
+
+export const mediumSelection: PresetFeatureSelection = makePresetSelection("medium", lowFeatures);
+
+export const highSelection: PresetFeatureSelection = makePresetSelection("high", highFeatures);
+
+export const maximumSelection: PresetFeatureSelection = makePresetSelection(
+  "maximum",
+  highFeatures,
+);
+
+export function presetSelection(preset: Preset): PresetFeatureSelection {
+  switch (preset) {
+    case "minimum":
+      return minimumSelection;
+    case "low":
+      return lowSelection;
+    case "medium":
+      return mediumSelection;
+    case "high":
+      return highSelection;
+    case "maximum":
+      return maximumSelection;
+  }
+}
+
+function makePresetSelection(
+  preset: Preset,
+  requested: readonly OptionalFeatureId[],
+): PresetFeatureSelection {
+  return {
+    mode: "preset",
+    preset,
+    requested,
+    features: resolveFeatures(requested),
+    omitted: [],
+  };
+}
+
+export function shippingGates(selection: FeatureSelection): readonly ShippingGate[] {
+  return selection.mode === "preset" ? shippingGatesByPreset[selection.preset] : [];
+}
 
 export function createFeatureSelection(
   requested: readonly OptionalFeatureId[],
