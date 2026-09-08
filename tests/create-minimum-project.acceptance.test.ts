@@ -358,7 +358,8 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
 
   Scenario("Choose Bun for an interactively selected project", ({ Given, When, Then, And }) => {
     let interactiveOutput: ProcessResult | undefined;
-    let interactiveSession: InteractiveSession | undefined;
+    let packageManagerChoice: "1" | "2" = "1";
+    let chooserOutput: ProcessResult | undefined;
 
     Given("an empty workspace for a new project", async () => {
       workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
@@ -367,44 +368,43 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     When("I start creating {string} without a preset", async (_context, projectName: string) => {
       const currentWorkspace = requireState(workspace, "The workspace was not created.");
       generatedProject = join(currentWorkspace, projectName);
-      interactiveSession = startInteractive(
-        [resolve("dist/cli.js"), "create", projectName],
+      chooserOutput = await runInteractive(
+        [resolve("dist/cli.js"), "create", "package-manager-chooser-probe"],
         currentWorkspace,
+        featureInput(new Set()),
       );
-      await interactiveSession.waitForOutput("Package manager [1]:");
     });
 
     Then(
       "the package manager chooser displays radio buttons for {string} and {string}",
       async (_context, first: string, second: string) => {
-        const session = requireState(
-          interactiveSession,
-          "The package manager chooser did not run.",
-        );
-        expect(session.output()).toContain(`(*) ${first}`);
-        expect(session.output()).toContain(`( ) ${second}`);
+        const output = requireState(chooserOutput, "The package manager chooser did not run.");
+        expect(output.stdout).toContain(`(*) ${first}`);
+        expect(output.stdout).toContain(`( ) ${second}`);
       },
     );
 
     And("pnpm is selected by default", async () => {
-      const session = requireState(
-        interactiveSession,
-        "The package manager chooser did not run.",
+      const output = requireState(chooserOutput, "The package manager chooser did not run.");
+      expect(output.stdout).toContain("Package manager [1]:");
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      const packageJson = await readJson<{ packageManager: string }>(
+        join(currentWorkspace, "package-manager-chooser-probe/package.json"),
       );
-      expect(session.output()).toContain("Package manager [1]:");
+      expect(packageJson.packageManager).toBe("pnpm@10.11.0");
     });
 
     When("I select {string} as the package manager", async (_context, packageManager: string) => {
-      const session = requireState(interactiveSession, "The interactive process did not start.");
-      const input = packageManager === "Bun" ? "2" : "1";
-      session.send(input);
-      await session.waitForOutput("Select optional features.");
+      packageManagerChoice = packageManager === "Bun" ? "2" : "1";
     });
 
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
-      const session = requireState(interactiveSession, "The interactive process did not start.");
-      session.send(featureAnswers(new Set(rows.map(({ feature }) => feature))));
-      interactiveOutput = await session.finish();
+      const project = requireState(generatedProject, "The project was not named.");
+      interactiveOutput = await runInteractive(
+        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        requireState(workspace, "The workspace was not created."),
+        featureInput(new Set(rows.map(({ feature }) => feature)), undefined, packageManagerChoice),
+      );
       expect(interactiveOutput.code).toBe(0);
     });
 
@@ -1267,71 +1267,6 @@ async function runInteractive(
     });
     child.stdin.end(`${input}\n`);
   });
-}
-
-type InteractiveSession = {
-  readonly output: () => string;
-  readonly send: (input: string) => void;
-  readonly waitForOutput: (expected: string) => Promise<void>;
-  readonly finish: () => Promise<ProcessResult>;
-};
-
-function startInteractive(arguments_: readonly string[], cwd: string): InteractiveSession {
-  const child = spawn(process.execPath, arguments_, { cwd, stdio: ["pipe", "pipe", "pipe"] });
-  let stdout = "";
-  let stderr = "";
-  let closed = false;
-  let result: ProcessResult | undefined;
-  const outputWaiters: {
-    expected: string;
-    resolve: () => void;
-    reject: (error: Error) => void;
-  }[] = [];
-  const resultPromise = new Promise<ProcessResult>((resolvePromise, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => {
-      closed = true;
-      result = { code, stdout, stderr };
-      resolvePromise(result);
-      for (const waiter of outputWaiters.splice(0)) {
-        waiter.reject(new Error(`Interactive process closed before output: ${waiter.expected}`));
-      }
-    });
-  });
-
-  child.stdout.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString();
-    for (let index = outputWaiters.length - 1; index >= 0; index -= 1) {
-      const waiter = outputWaiters[index];
-      if (waiter !== undefined && stdout.includes(waiter.expected)) {
-        outputWaiters.splice(index, 1);
-        waiter.resolve();
-      }
-    }
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString();
-  });
-
-  return {
-    output(): string {
-      return stdout;
-    },
-    send(input: string): void {
-      if (closed) throw new Error("Interactive process already closed.");
-      child.stdin.write(`${input}\n`);
-    },
-    waitForOutput(expected: string): Promise<void> {
-      if (stdout.includes(expected)) return Promise.resolve();
-      return new Promise<void>((resolvePromise, reject) => {
-        outputWaiters.push({ expected, resolve: resolvePromise, reject });
-      });
-    },
-    async finish(): Promise<ProcessResult> {
-      child.stdin.end();
-      return result ?? (await resultPromise);
-    },
-  };
 }
 
 async function run(command: string, arguments_: readonly string[], cwd: string): Promise<void> {

@@ -13,6 +13,7 @@ The intended model is that presets control how many deterministic gates an agent
 ## Proposed baseline to review
 
 ### Minimum — “Does it basically work?”
+
 - Builds/parses successfully.
 - Formatter/linter passes.
 - Existing tests still pass.
@@ -21,7 +22,9 @@ The intended model is that presets control how many deterministic gates an agent
 - Agent stays within a basic token/compute budget.
 
 ### Low — “Safe enough for routine internal work.”
+
 Everything in Minimum, plus:
+
 - Unit tests for changed behavior.
 - Type checking where available.
 - Dependency vulnerability scan.
@@ -30,7 +33,9 @@ Everything in Minimum, plus:
 - Simple complexity/file-size limits.
 
 ### Medium — “Normal production.”
+
 Everything in Low, plus:
+
 - Meaningful unit/integration tests.
 - Coverage threshold on changed code.
 - SAST, secret, and dependency scanning.
@@ -41,7 +46,9 @@ Everything in Low, plus:
 - Agent produces a reviewable diff and explanation.
 
 ### High — “Important production systems.”
+
 Everything in Medium, plus:
+
 - Property/fuzz tests for important logic.
 - Mutation testing on critical modules.
 - Stronger coverage requirements.
@@ -54,7 +61,9 @@ Everything in Medium, plus:
 - Stronger token/compute limits and back-pressure when the agent keeps rewriting.
 
 ### Maximum — “Failure is exceptionally expensive.”
+
 Everything in High, plus:
+
 - Adversarial/fuzz testing across trust boundaries.
 - High mutation score on critical code.
 - Stress/soak tests.
@@ -68,15 +77,15 @@ Everything in High, plus:
 
 ## Suggested emphasis by constraint
 
-| Constraint | Minimum | Low | Medium | High | Maximum |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Correctness | 1/5 | 2/5 | 3/5 | 4/5 | 5/5 |
-| Security | 2/5 | 2/5 | 3/5 | 4/5 | 5/5 |
-| Performance | 1/5 | 1/5 | 3/5 | 4/5 | 5/5 |
-| Accessibility | 1/5 | 2/5 | 3/5 | 4/5 | 5/5 |
-| Maintainability | 1/5 | 2/5 | 3/5 | 4/5 | 5/5 |
-| Cost efficiency | 4/5 | 4/5 | 3/5 | 2/5 | 1/5 |
-| Comprehensibility | 1/5 | 2/5 | 3/5 | 4/5 | 5/5 |
+| Constraint        | Minimum | Low | Medium | High | Maximum |
+| ----------------- | ------: | --: | -----: | ---: | ------: |
+| Correctness       |     1/5 | 2/5 |    3/5 |  4/5 |     5/5 |
+| Security          |     2/5 | 2/5 |    3/5 |  4/5 |     5/5 |
+| Performance       |     1/5 | 1/5 |    3/5 |  4/5 |     5/5 |
+| Accessibility     |     1/5 | 2/5 |    3/5 |  4/5 |     5/5 |
+| Maintainability   |     1/5 | 2/5 |    3/5 |  4/5 |     5/5 |
+| Cost efficiency   |     4/5 | 4/5 |    3/5 |  2/5 |     1/5 |
+| Comprehensibility |     1/5 | 2/5 |    3/5 |  4/5 |     5/5 |
 
 ## What I want from you
 
@@ -85,5 +94,5 @@ Everything in High, plus:
 3. Call out anything in the proposal that is misplaced, redundant, too expensive, not deterministic enough to be a gate, or inconsistent with this project's philosophy.
 4. Preserve the principle that presets are composable accumulations of features rather than independent templates.
 5. Identify which checks should be mandatory at every preset level, especially security/correctness floors.
-6. Distinguish between checks that can be implemented now with the current TypeScript/Node/pnpm stack and checks that should remain future/optional capabilities.
+6. Distinguish between checks that can be implemented now with the current TypeScript/Node stack, including pnpm and interactive Bun support, and checks that should remain future/optional capabilities.
 7. Do not change implementation yet. First return a concrete recommended preset matrix and explain any changes from the proposal.
