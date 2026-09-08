@@ -8,6 +8,8 @@ import {
   createFeatureSelection,
   featureCatalog,
   linterFeatures,
+  packageManagers,
+  type PackageManager,
   presetSelection,
   presets,
   omitFeatures,
@@ -57,7 +59,7 @@ async function main(): Promise<void> {
 
     stdout.write(
       `${options.command === "create" ? "Created" : "Merged"} ${result.directory} with ${origin} (${result.files.length} files).\n` +
-        `Next: cd ${targetDirectory} && pnpm install && pnpm check\n`,
+        `Next: cd ${targetDirectory} && ${selection.packageManager} install && ${selection.packageManager} check\n`,
     );
   } finally {
     input.close();
@@ -108,6 +110,7 @@ function capitalize(value: string): string {
 }
 
 async function promptForFeatures(input: InputReader) {
+  const packageManager = await promptForPackageManager(input);
   stdout.write("Select optional features. Type y to include each feature.\n");
   const selected: OptionalFeatureId[] = [];
   for (const feature of featureCatalog.filter(({ parent }) => parent === null)) {
@@ -116,7 +119,17 @@ async function promptForFeatures(input: InputReader) {
   if (selected.includes("ultracite") && !hasSelectedLinter(selected)) {
     selected.push(await promptForUltraciteBackend(input));
   }
-  return createFeatureSelection(selected);
+  return createFeatureSelection(selected, packageManager);
+}
+
+async function promptForPackageManager(input: InputReader): Promise<PackageManager> {
+  stdout.write("Choose a package manager:\n  (*) pnpm\n  ( ) Bun\n");
+  const response = (await input.ask("Package manager [1]: ")).trim().toLowerCase();
+  if (response.length === 0 || response === "1" || response === "pnpm") return packageManagers[0];
+  if (response === "2" || response === "bun") return packageManagers[1];
+  throw new Error(
+    `Unknown package manager "${response}". Available: ${packageManagers.join(", ")}.`,
+  );
 }
 
 function hasSelectedLinter(selected: readonly OptionalFeatureId[]): boolean {

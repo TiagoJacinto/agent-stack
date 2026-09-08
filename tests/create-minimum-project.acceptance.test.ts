@@ -356,6 +356,107 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     },
   );
 
+  Scenario("Choose Bun for an interactively selected project", ({ Given, When, Then, And }) => {
+    let interactiveOutput: ProcessResult | undefined;
+    let packageManagerChoice: "1" | "2" = "1";
+    let chooserOutput: ProcessResult | undefined;
+
+    Given("an empty workspace for a new project", async () => {
+      workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+    });
+
+    When("I start creating {string} without a preset", async (_context, projectName: string) => {
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      generatedProject = join(currentWorkspace, projectName);
+      chooserOutput = await runInteractive(
+        [resolve("dist/cli.js"), "create", "package-manager-chooser-probe"],
+        currentWorkspace,
+        featureInput(new Set()),
+      );
+    });
+
+    Then(
+      "the package manager chooser displays radio buttons for {string} and {string}",
+      async (_context, first: string, second: string) => {
+        const output = requireState(chooserOutput, "The package manager chooser did not run.");
+        expect(output.stdout).toContain(`(*) ${first}`);
+        expect(output.stdout).toContain(`( ) ${second}`);
+      },
+    );
+
+    And("pnpm is selected by default", async () => {
+      const output = requireState(chooserOutput, "The package manager chooser did not run.");
+      expect(output.stdout).toContain("Package manager [1]:");
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      const packageJson = await readJson<{ packageManager: string }>(
+        join(currentWorkspace, "package-manager-chooser-probe/package.json"),
+      );
+      expect(packageJson.packageManager).toBe("pnpm@10.11.0");
+    });
+
+    When("I select {string} as the package manager", async (_context, packageManager: string) => {
+      packageManagerChoice = packageManager === "Bun" ? "2" : "1";
+    });
+
+    And("I select these features:", async (_context, rows: { feature: string }[]) => {
+      const project = requireState(generatedProject, "The project was not named.");
+      interactiveOutput = await runInteractive(
+        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        requireState(workspace, "The workspace was not created."),
+        featureInput(new Set(rows.map(({ feature }) => feature)), undefined, packageManagerChoice),
+      );
+      expect(interactiveOutput.code).toBe(0);
+    });
+
+    Then("the generated project records Bun as its package manager", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      const manifest = await readJson<{ packageManager: string }>(
+        join(project, ".agent-stack/manifest.json"),
+      );
+      expect(manifest.packageManager).toBe("bun");
+    });
+
+    And(
+      "the generated package.json declares {string} as its package manager",
+      async (_context, value: string) => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const packageJson = await readJson<{ packageManager: string }>(
+          join(project, "package.json"),
+        );
+        expect(packageJson.packageManager).toBe(value);
+      },
+    );
+
+    And("the generated documentation uses Bun commands", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      await expectFileToContain(project, "README.md", "`bun check`");
+      await expectFileToContain(project, "README.md", "- bun 1.3.14");
+    });
+
+    And("the generated GitHub Actions workflow uses Bun commands", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      const workflow = parseWorkflow(
+        await readFile(join(project, ".github/workflows/ci.yml"), "utf8"),
+      );
+      expect(workflow.jobs.verify?.steps).toEqual(
+        expect.arrayContaining([
+          { uses: "oven-sh/setup-bun@v2" },
+          { run: "bun install --frozen-lockfile" },
+          { run: "bun check" },
+        ]),
+      );
+      expect(workflow.jobs.verify?.steps).not.toEqual(
+        expect.arrayContaining([{ run: expect.stringContaining("pnpm") }]),
+      );
+    });
+
+    And("installing dependencies and running the Bun project checks succeeds", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      await run("bun", ["install"], project);
+      await run("bun", ["check"], project);
+    });
+  });
+
   Scenario(
     "Add the Vitest adapter for selected property-based testing",
     ({ Given, When, Then, And }) => {
@@ -1072,7 +1173,7 @@ async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
 
 type CatalogFeature = (typeof featureCatalog)[number];
 
-function featureInput(selected: ReadonlySet<string>, confirmation?: "y" | "n"): string {
+function featureAnswers(selected: ReadonlySet<string>, confirmation?: "y" | "n"): string {
   const answers: string[] = [];
 
   const visit = (feature: CatalogFeature): void => {
@@ -1091,6 +1192,14 @@ function featureInput(selected: ReadonlySet<string>, confirmation?: "y" | "n"): 
   }
   if (confirmation !== undefined) answers.push(confirmation);
   return answers.join("\n");
+}
+
+function featureInput(
+  selected: ReadonlySet<string>,
+  confirmation?: "y" | "n",
+  packageManager: "1" | "2" = "1",
+): string {
+  return [packageManager, featureAnswers(selected, confirmation)].join("\n");
 }
 
 async function expectFileToEqual(project: string, path: string, expected: string): Promise<void> {

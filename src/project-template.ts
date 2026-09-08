@@ -1,4 +1,9 @@
-import { shippingGates, type FeatureId, type FeatureSelection } from "./catalog.js";
+import {
+  packageManagerVersions,
+  shippingGates,
+  type FeatureId,
+  type FeatureSelection,
+} from "./catalog.js";
 import { antiSlopAssets } from "./anti-slop-assets.js";
 
 const eslintSupportDependencies = {
@@ -86,7 +91,7 @@ export function projectFiles(
     `;
   }
   if (has(selection, "agent-context")) {
-    Object.assign(files, agentContextFiles());
+    Object.assign(files, agentContextFiles(selection));
   }
 
   return files;
@@ -111,7 +116,7 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
     scripts.format = "oxfmt .";
     scripts["format:check"] = "oxfmt --check .";
     devDependencies.oxfmt = "^0.16.0";
-    checks.push("pnpm format:check");
+    checks.push(`${selection.packageManager} format:check`);
   }
   if (has(selection, "oxlint")) {
     devDependencies.oxlint = "^1.81.0";
@@ -126,7 +131,7 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
   }
   if (lintCommands.length > 0) {
     scripts.lint = lintCommands.join(" && ");
-    checks.push("pnpm lint");
+    checks.push(`${selection.packageManager} lint`);
   }
   if (has(selection, "anti-slop") && !has(selection, "ultracite")) {
     devDependencies["@oxlint/plugins"] = "1.81.0";
@@ -135,12 +140,12 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
     devDependencies.ultracite = "^7.10.8";
   }
 
-  checks.push("pnpm typecheck");
+  checks.push(`${selection.packageManager} typecheck`);
 
   if (has(selection, "vitest")) {
     scripts.test = "vitest run";
     devDependencies.vitest = "^3.2.2";
-    checks.push("pnpm test");
+    checks.push(`${selection.packageManager} test`);
   }
   if (has(selection, "property-testing")) {
     devDependencies["@fast-check/vitest"] = "^0.3.0";
@@ -160,7 +165,7 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
     type: "module",
     scripts,
     engines: { node: ">=22" },
-    packageManager: "pnpm@10.11.0",
+    packageManager: `${selection.packageManager}@${packageManagerVersions[selection.packageManager]}`,
     devDependencies,
   });
 }
@@ -314,6 +319,18 @@ function exampleTest(): string {
 }
 
 function githubWorkflow(selection: FeatureSelection): string {
+  const packageManagerSetup =
+    selection.packageManager === "pnpm"
+      ? [
+          "      - uses: pnpm/action-setup@v4",
+          "        with:",
+          "          version: 10.11.0",
+          "      - uses: actions/setup-node@v4",
+          "        with:",
+          "          node-version: 22",
+          "          cache: pnpm",
+        ]
+      : ["      - uses: oven-sh/setup-bun@v2", "        with:", "          bun-version: 1.3.14"];
   const lines = [
     "name: CI",
     "",
@@ -332,17 +349,13 @@ function githubWorkflow(selection: FeatureSelection): string {
     "      - uses: actions/checkout@v4",
     "        with:",
     "          fetch-depth: 0",
-    "      - uses: pnpm/action-setup@v4",
-    "        with:",
-    "          version: 10.11.0",
-    "      - uses: actions/setup-node@v4",
-    "        with:",
-    "          node-version: 22",
-    "          cache: pnpm",
-    "      - run: pnpm install --frozen-lockfile",
-    "      - run: pnpm check",
+    ...packageManagerSetup,
+    `      - run: ${selection.packageManager} install --frozen-lockfile`,
+    `      - run: ${selection.packageManager} check`,
   ];
-  if (has(selection, "dependency-audit")) lines.push("      - run: pnpm audit --audit-level high");
+  if (has(selection, "dependency-audit")) {
+    lines.push(`      - run: ${selection.packageManager} audit --audit-level high`);
+  }
   if (has(selection, "gitleaks")) {
     lines.push(
       "      - uses: gitleaks/gitleaks-action@v2",
@@ -363,11 +376,13 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
       ? `the ${selection.preset[0]?.toUpperCase()}${selection.preset.slice(1)} preset`
       : "individually selected features";
   const commands = [
-    "- `pnpm dev` — run the entry point in watch mode.",
-    "- `pnpm build` — compile production output.",
-    has(selection, "vitest") ? "- `pnpm test` — run unit tests." : "",
-    has(selection, "mutation-testing") ? "- `pnpm mutation` — run Stryker mutation tests." : "",
-    "- `pnpm check` — run every configured project check.",
+    `- \`${selection.packageManager} dev\` — run the entry point in watch mode.`,
+    `- \`${selection.packageManager} build\` — compile production output.`,
+    has(selection, "vitest") ? `- \`${selection.packageManager} test\` — run unit tests.` : "",
+    has(selection, "mutation-testing")
+      ? `- \`${selection.packageManager} mutation\` — run Stryker mutation tests.`
+      : "",
+    `- \`${selection.packageManager} check\` — run every configured project check.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -380,7 +395,7 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
     ## Requirements
 
     - Node.js 22 or newer
-    - pnpm 10.11.0
+    - ${selection.packageManager} ${packageManagerVersions[selection.packageManager]}
 
     ## Selected features
 
@@ -399,14 +414,14 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
   `;
 }
 
-function agentContextFiles(): Readonly<Record<string, string>> {
+function agentContextFiles(selection: FeatureSelection): Readonly<Record<string, string>> {
   return {
     "AGENTS.md": text`
       # Agent instructions
 
       1. Read \`README.md\`, \`docs/GLOSSARY.md\`, and \`.agent-stack/progress.json\` before changing code.
       2. Work on one feature at a time and leave the repository in a passing state.
-      3. Run \`pnpm check\` before declaring work complete.
+      3. Run \`${selection.packageManager} check\` before declaring work complete.
       4. Update documentation and progress records when behavior, boundaries, or invariants change.
       5. Never weaken or remove a failing check merely to make it pass.
     `,
@@ -415,7 +430,7 @@ function agentContextFiles(): Readonly<Record<string, string>> {
 
       - **Agent stack:** The selected tools and project artifacts that constrain and guide coding agents.
       - **Feature:** One independently verifiable capability installed by the scaffolder.
-      - **Project check:** The aggregate \`pnpm check\` command that must pass before work is complete.
+      - **Project check:** The aggregate \`${selection.packageManager} check\` command that must pass before work is complete.
       - **Progress manifest:** The structured record used to continue work across agent sessions.
     `,
     ".agent-stack/progress.json": json({
@@ -432,12 +447,14 @@ function manifest(selection: FeatureSelection): string {
     return json({
       schemaVersion: 1,
       initialPreset: selection.preset,
+      packageManager: selection.packageManager,
       features: selection.features,
     });
   }
 
   return json({
     schemaVersion: 1,
+    packageManager: selection.packageManager,
     selection: {
       mode: "features",
       requested: selection.requested,
