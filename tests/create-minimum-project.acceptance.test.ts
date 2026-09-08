@@ -358,6 +358,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
 
   Scenario("Choose Bun for an interactively selected project", ({ Given, When, Then, And }) => {
     let interactiveOutput: ProcessResult | undefined;
+    let interactiveSession: InteractiveSession | undefined;
 
     Given("an empty workspace for a new project", async () => {
       workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
@@ -366,35 +367,45 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     When("I start creating {string} without a preset", async (_context, projectName: string) => {
       const currentWorkspace = requireState(workspace, "The workspace was not created.");
       generatedProject = join(currentWorkspace, projectName);
-      interactiveOutput = await runInteractive(
+      interactiveSession = startInteractive(
         [resolve("dist/cli.js"), "create", projectName],
         currentWorkspace,
-        featureInput(new Set(["vitest", "github-actions"]), undefined, "2"),
       );
+      await interactiveSession.waitForOutput("Package manager [1]:");
     });
 
     Then(
       "the package manager chooser displays radio buttons for {string} and {string}",
       async (_context, first: string, second: string) => {
-        const output = requireState(interactiveOutput, "The package manager chooser did not run.");
-        expect(output.stdout).toContain(`(*) ${first}`);
-        expect(output.stdout).toContain(`( ) ${second}`);
+        const session = requireState(
+          interactiveSession,
+          "The package manager chooser did not run.",
+        );
+        expect(session.output()).toContain(`(*) ${first}`);
+        expect(session.output()).toContain(`( ) ${second}`);
       },
     );
 
     And("pnpm is selected by default", async () => {
-      const output = requireState(interactiveOutput, "The package manager chooser did not run.");
-      expect(output.stdout).toContain("Package manager [1]:");
-    });
-
-    When("I select {string} as the package manager", async () => {
-      expect(requireState(interactiveOutput, "The package manager chooser did not run.").code).toBe(
-        0,
+      const session = requireState(
+        interactiveSession,
+        "The package manager chooser did not run.",
       );
+      expect(session.output()).toContain("Package manager [1]:");
     });
 
-    And("I select these features:", async () => {
-      expect(requireState(interactiveOutput, "The feature selection did not run.").code).toBe(0);
+    When("I select {string} as the package manager", async (_context, packageManager: string) => {
+      const session = requireState(interactiveSession, "The interactive process did not start.");
+      const input = packageManager === "Bun" ? "2" : "1";
+      session.send(input);
+      await session.waitForOutput("Select optional features.");
+    });
+
+    And("I select these features:", async (_context, rows: { feature: string }[]) => {
+      const session = requireState(interactiveSession, "The interactive process did not start.");
+      session.send(featureAnswers(new Set(rows.map(({ feature }) => feature))));
+      interactiveOutput = await session.finish();
+      expect(interactiveOutput.code).toBe(0);
     });
 
     Then("the generated project records Bun as its package manager", async () => {
@@ -424,11 +435,19 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
 
     And("the generated GitHub Actions workflow uses Bun commands", async () => {
       const project = requireState(generatedProject, "The project was not generated.");
-      const workflow = await readFile(join(project, ".github/workflows/ci.yml"), "utf8");
-      expect(workflow).toContain("oven-sh/setup-bun@v2");
-      expect(workflow).toContain("bun install --frozen-lockfile");
-      expect(workflow).toContain("bun check");
-      expect(workflow).not.toContain("pnpm");
+      const workflow = parseWorkflow(
+        await readFile(join(project, ".github/workflows/ci.yml"), "utf8"),
+      );
+      expect(workflow.jobs.verify?.steps).toEqual(
+        expect.arrayContaining([
+          { uses: "oven-sh/setup-bun@v2" },
+          { run: "bun install --frozen-lockfile" },
+          { run: "bun check" },
+        ]),
+      );
+      expect(workflow.jobs.verify?.steps).not.toEqual(
+        expect.arrayContaining([{ run: expect.stringContaining("pnpm") }]),
+      );
     });
 
     And("installing dependencies and running the Bun project checks succeeds", async () => {
@@ -1154,12 +1173,8 @@ async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
 
 type CatalogFeature = (typeof featureCatalog)[number];
 
-function featureInput(
-  selected: ReadonlySet<string>,
-  confirmation?: "y" | "n",
-  packageManager: "1" | "2" = "1",
-): string {
-  const answers: string[] = [packageManager];
+function featureAnswers(selected: ReadonlySet<string>, confirmation?: "y" | "n"): string {
+  const answers: string[] = [];
 
   const visit = (feature: CatalogFeature): void => {
     const included = selected.has(feature.id);
@@ -1177,6 +1192,14 @@ function featureInput(
   }
   if (confirmation !== undefined) answers.push(confirmation);
   return answers.join("\n");
+}
+
+function featureInput(
+  selected: ReadonlySet<string>,
+  confirmation?: "y" | "n",
+  packageManager: "1" | "2" = "1",
+): string {
+  return [packageManager, featureAnswers(selected, confirmation)].join("\n");
 }
 
 async function expectFileToEqual(project: string, path: string, expected: string): Promise<void> {
@@ -1244,6 +1267,71 @@ async function runInteractive(
     });
     child.stdin.end(`${input}\n`);
   });
+}
+
+type InteractiveSession = {
+  readonly output: () => string;
+  readonly send: (input: string) => void;
+  readonly waitForOutput: (expected: string) => Promise<void>;
+  readonly finish: () => Promise<ProcessResult>;
+};
+
+function startInteractive(arguments_: readonly string[], cwd: string): InteractiveSession {
+  const child = spawn(process.execPath, arguments_, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let closed = false;
+  let result: ProcessResult | undefined;
+  const outputWaiters: {
+    expected: string;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  }[] = [];
+  const resultPromise = new Promise<ProcessResult>((resolvePromise, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      closed = true;
+      result = { code, stdout, stderr };
+      resolvePromise(result);
+      for (const waiter of outputWaiters.splice(0)) {
+        waiter.reject(new Error(`Interactive process closed before output: ${waiter.expected}`));
+      }
+    });
+  });
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString();
+    for (let index = outputWaiters.length - 1; index >= 0; index -= 1) {
+      const waiter = outputWaiters[index];
+      if (waiter !== undefined && stdout.includes(waiter.expected)) {
+        outputWaiters.splice(index, 1);
+        waiter.resolve();
+      }
+    }
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+
+  return {
+    output(): string {
+      return stdout;
+    },
+    send(input: string): void {
+      if (closed) throw new Error("Interactive process already closed.");
+      child.stdin.write(`${input}\n`);
+    },
+    waitForOutput(expected: string): Promise<void> {
+      if (stdout.includes(expected)) return Promise.resolve();
+      return new Promise<void>((resolvePromise, reject) => {
+        outputWaiters.push({ expected, resolve: resolvePromise, reject });
+      });
+    },
+    async finish(): Promise<ProcessResult> {
+      child.stdin.end();
+      return result ?? (await resultPromise);
+    },
+  };
 }
 
 async function run(command: string, arguments_: readonly string[], cwd: string): Promise<void> {
