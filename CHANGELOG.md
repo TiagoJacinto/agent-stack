@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.3.0...create-agent-stack-v1.4.0) (2026-09-08)
+
+
+### Features
+
+* add progressive shipping presets ([c8cf111](https://github.com/TiagoJacinto/agent-stack/commit/c8cf1111fa774a476eb77915122354b0becbb492))
+
 ## [1.3.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.2.0...create-agent-stack-v1.3.0) (2026-09-07)
 
 
