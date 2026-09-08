@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.4.0...create-agent-stack-v1.4.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* remove duplicated progress feature state ([45c26e1](https://github.com/TiagoJacinto/agent-stack/commit/45c26e17503f807764fe8a9d592265adcf5265de))
+* remove duplicated progress feature state ([1183621](https://github.com/TiagoJacinto/agent-stack/commit/11836213578a43f857284e9c7b92e2d1d38946d9))
+
 ## [1.4.0](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.3.0...create-agent-stack-v1.4.0) (2026-09-08)
 
 
