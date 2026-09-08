@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.4.1...create-agent-stack-v1.4.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* record initial preset provenance ([ae9310f](https://github.com/TiagoJacinto/agent-stack/commit/ae9310fee115f9998be4f16da54eccd96df63578))
+
 ## [1.4.1](https://github.com/TiagoJacinto/agent-stack/compare/create-agent-stack-v1.4.0...create-agent-stack-v1.4.1) (2026-09-08)
 
 
