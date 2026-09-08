@@ -1,5 +1,5 @@
 Feature: Create an agent stack project
-  Developers can scaffold a verified TypeScript project with either a preset or individually selected agent-stack features.
+  Developers can scaffold a verified TypeScript project with pnpm or Bun, using either a preset or individually selected agent-stack features.
   They can create a new project or merge agent-stack capabilities into an existing project.
 
   Scenario: Generate a new project with the Minimum preset
@@ -87,6 +87,22 @@ Feature: Create an agent stack project
     And child features are offered only after their parent is selected
     And the command does not ask for confirmation
     And installing dependencies and running the custom project checks succeeds
+
+  Scenario: Choose Bun for an interactively selected project
+    Given an empty workspace for a new project
+    When I start creating "bun-project" without a preset
+    Then the package manager chooser displays radio buttons for "pnpm" and "Bun"
+    And pnpm is selected by default
+    When I select "Bun" as the package manager
+    And I select these features:
+      | feature         |
+      | vitest          |
+      | github-actions  |
+    Then the generated project records Bun as its package manager
+    And the generated package.json declares "bun@1.3.14" as its package manager
+    And the generated documentation uses Bun commands
+    And the generated GitHub Actions workflow uses Bun commands
+    And installing dependencies and running the Bun project checks succeeds
 
   Scenario: Add the Vitest adapter for selected property-based testing
     Given an empty workspace for a new project

@@ -356,6 +356,88 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     },
   );
 
+  Scenario("Choose Bun for an interactively selected project", ({ Given, When, Then, And }) => {
+    let interactiveOutput: ProcessResult | undefined;
+
+    Given("an empty workspace for a new project", async () => {
+      workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+    });
+
+    When("I start creating {string} without a preset", async (_context, projectName: string) => {
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      generatedProject = join(currentWorkspace, projectName);
+      interactiveOutput = await runInteractive(
+        [resolve("dist/cli.js"), "create", projectName],
+        currentWorkspace,
+        featureInput(new Set(["vitest", "github-actions"]), undefined, "2"),
+      );
+    });
+
+    Then(
+      "the package manager chooser displays radio buttons for {string} and {string}",
+      async (_context, first: string, second: string) => {
+        const output = requireState(interactiveOutput, "The package manager chooser did not run.");
+        expect(output.stdout).toContain(`(*) ${first}`);
+        expect(output.stdout).toContain(`( ) ${second}`);
+      },
+    );
+
+    And("pnpm is selected by default", async () => {
+      const output = requireState(interactiveOutput, "The package manager chooser did not run.");
+      expect(output.stdout).toContain("Package manager [1]:");
+    });
+
+    When("I select {string} as the package manager", async () => {
+      expect(requireState(interactiveOutput, "The package manager chooser did not run.").code).toBe(
+        0,
+      );
+    });
+
+    And("I select these features:", async () => {
+      expect(requireState(interactiveOutput, "The feature selection did not run.").code).toBe(0);
+    });
+
+    Then("the generated project records Bun as its package manager", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      const manifest = await readJson<{ packageManager: string }>(
+        join(project, ".agent-stack/manifest.json"),
+      );
+      expect(manifest.packageManager).toBe("bun");
+    });
+
+    And(
+      "the generated package.json declares {string} as its package manager",
+      async (_context, value: string) => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const packageJson = await readJson<{ packageManager: string }>(
+          join(project, "package.json"),
+        );
+        expect(packageJson.packageManager).toBe(value);
+      },
+    );
+
+    And("the generated documentation uses Bun commands", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      await expectFileToContain(project, "README.md", "`bun check`");
+      await expectFileToContain(project, "README.md", "- bun 1.3.14");
+    });
+
+    And("the generated GitHub Actions workflow uses Bun commands", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      const workflow = await readFile(join(project, ".github/workflows/ci.yml"), "utf8");
+      expect(workflow).toContain("oven-sh/setup-bun@v2");
+      expect(workflow).toContain("bun install --frozen-lockfile");
+      expect(workflow).toContain("bun check");
+      expect(workflow).not.toContain("pnpm");
+    });
+
+    And("installing dependencies and running the Bun project checks succeeds", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      await run("bun", ["install"], project);
+      await run("bun", ["check"], project);
+    });
+  });
+
   Scenario(
     "Add the Vitest adapter for selected property-based testing",
     ({ Given, When, Then, And }) => {
@@ -1072,8 +1154,12 @@ async function inspectCapabilities(project: string): Promise<CapabilityRow[]> {
 
 type CatalogFeature = (typeof featureCatalog)[number];
 
-function featureInput(selected: ReadonlySet<string>, confirmation?: "y" | "n"): string {
-  const answers: string[] = [];
+function featureInput(
+  selected: ReadonlySet<string>,
+  confirmation?: "y" | "n",
+  packageManager: "1" | "2" = "1",
+): string {
+  const answers: string[] = [packageManager];
 
   const visit = (feature: CatalogFeature): void => {
     const included = selected.has(feature.id);

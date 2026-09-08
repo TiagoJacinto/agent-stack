@@ -2,6 +2,15 @@ export const presets = ["minimum", "low", "medium", "high", "maximum"] as const;
 
 export type Preset = (typeof presets)[number];
 
+export const packageManagers = ["pnpm", "bun"] as const;
+
+export type PackageManager = (typeof packageManagers)[number];
+
+export const packageManagerVersions: Readonly<Record<PackageManager, string>> = {
+  pnpm: "10.11.0",
+  bun: "1.3.14",
+};
+
 export const coreFeatures = ["typescript-node-pnpm", "obvious-scripts"] as const;
 
 export const featureCatalog = [
@@ -41,7 +50,7 @@ export const featureCatalog = [
 ] as const;
 
 export type OptionalFeatureId = (typeof featureCatalog)[number]["id"];
-export type CoreFeatureId = (typeof coreFeatures)[number];
+export type CoreFeatureId = "typescript-node-pnpm" | "typescript-node-bun" | "obvious-scripts";
 export type FeatureId = CoreFeatureId | OptionalFeatureId;
 
 export const linterFeatures = ["oxlint", "eslint"] as const;
@@ -50,6 +59,7 @@ export type LinterFeatureId = (typeof linterFeatures)[number];
 export interface PresetFeatureSelection {
   readonly mode: "preset";
   readonly preset: Preset;
+  readonly packageManager: PackageManager;
   readonly requested: readonly OptionalFeatureId[];
   readonly features: readonly FeatureId[];
   readonly omitted: readonly OptionalFeatureId[];
@@ -57,6 +67,7 @@ export interface PresetFeatureSelection {
 
 export interface CustomFeatureSelection {
   readonly mode: "features";
+  readonly packageManager: PackageManager;
   readonly requested: readonly OptionalFeatureId[];
   readonly features: readonly FeatureId[];
   readonly omitted: readonly OptionalFeatureId[];
@@ -175,13 +186,10 @@ const shippingGatesByPreset: Readonly<Record<Preset, readonly ShippingGate[]>> =
   ],
 };
 
-export const minimumSelection: PresetFeatureSelection = {
-  mode: "preset",
-  preset: "minimum",
-  requested: minimumFeatures,
-  features: resolveFeatures(minimumFeatures),
-  omitted: [],
-};
+export const minimumSelection: PresetFeatureSelection = makePresetSelection(
+  "minimum",
+  minimumFeatures,
+);
 
 export const lowSelection: PresetFeatureSelection = makePresetSelection("low", lowFeatures);
 
@@ -194,30 +202,39 @@ export const maximumSelection: PresetFeatureSelection = makePresetSelection(
   highFeatures,
 );
 
-export function presetSelection(preset: Preset): PresetFeatureSelection {
+export function presetSelection(
+  preset: Preset,
+  packageManager: PackageManager = "pnpm",
+): PresetFeatureSelection {
   switch (preset) {
     case "minimum":
-      return minimumSelection;
+      return packageManager === "pnpm"
+        ? minimumSelection
+        : makePresetSelection("minimum", minimumFeatures, packageManager);
     case "low":
-      return lowSelection;
+      return makePresetSelection("low", lowFeatures, packageManager);
     case "medium":
-      return mediumSelection;
+      return makePresetSelection("medium", lowFeatures, packageManager);
     case "high":
-      return highSelection;
+      return makePresetSelection("high", highFeatures, packageManager);
     case "maximum":
-      return maximumSelection;
+      return makePresetSelection("maximum", highFeatures, packageManager);
+    default:
+      throw new Error(`Unknown preset: ${preset}`);
   }
 }
 
 function makePresetSelection(
   preset: Preset,
   requested: readonly OptionalFeatureId[],
+  packageManager: PackageManager = "pnpm",
 ): PresetFeatureSelection {
   return {
     mode: "preset",
     preset,
+    packageManager,
     requested,
-    features: resolveFeatures(requested),
+    features: resolveFeatures(requested, packageManager),
     omitted: [],
   };
 }
@@ -228,11 +245,13 @@ export function shippingGates(selection: FeatureSelection): readonly ShippingGat
 
 export function createFeatureSelection(
   requested: readonly OptionalFeatureId[],
+  packageManager: PackageManager = "pnpm",
 ): CustomFeatureSelection {
   return {
     mode: "features",
+    packageManager,
     requested: unique(requested),
-    features: resolveFeatures(requested),
+    features: resolveFeatures(requested, packageManager),
     omitted: [],
   };
 }
@@ -263,7 +282,10 @@ export function selectionWarnings(selection: FeatureSelection): readonly Selecti
   return [];
 }
 
-export function resolveFeatures(requested: readonly OptionalFeatureId[]): readonly FeatureId[] {
+export function resolveFeatures(
+  requested: readonly OptionalFeatureId[],
+  packageManager: PackageManager = "pnpm",
+): readonly FeatureId[] {
   const selected = new Set<OptionalFeatureId>();
 
   const include = (id: OptionalFeatureId): void => {
@@ -278,9 +300,11 @@ export function resolveFeatures(requested: readonly OptionalFeatureId[]): readon
 
   for (const id of requested) include(id);
 
+  const corePackageManager = `typescript-node-${packageManager}` as CoreFeatureId;
   return [
-    ...coreFeatures,
-    ...featureCatalog.filter(({ id }) => selected.has(id)).map(({ id }) => id),
+    corePackageManager,
+    "obvious-scripts",
+    ...featureCatalog.flatMap(({ id }) => (selected.has(id) ? [id] : [])),
   ];
 }
 
