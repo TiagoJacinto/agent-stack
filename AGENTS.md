@@ -6,3 +6,17 @@
 4. Keep `--preset minimum` as the complete Minimum setup; omitting `--preset` must select individual optional features.
 5. Work on one feature at a time and leave both this repository and generated fixtures passing.
 6. Run `bun run check` before declaring work complete.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical triage labels defined in `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
