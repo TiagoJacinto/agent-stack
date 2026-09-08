@@ -354,11 +354,7 @@ function githubWorkflow(selection: FeatureSelection): string {
 }
 
 function shippingGatePolicy(selection: Extract<FeatureSelection, { mode: "preset" }>): string {
-  return json({
-    preset: selection.preset,
-    recommendation: selection.preset === "medium" ? "default-production" : undefined,
-    gates: shippingGates(selection),
-  });
+  return json({ gates: shippingGates(selection) });
 }
 
 function projectReadme(projectName: string, selection: FeatureSelection): string {
@@ -435,7 +431,7 @@ function manifest(selection: FeatureSelection): string {
   if (selection.mode === "preset") {
     return json({
       schemaVersion: 1,
-      preset: selection.preset,
+      initialPreset: selection.preset,
       features: selection.features,
     });
   }

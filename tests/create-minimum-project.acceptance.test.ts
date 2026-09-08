@@ -73,13 +73,13 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       },
     );
 
-    And("the generated project records the Minimum preset selection", async () => {
+    And("the generated project records Minimum as its initial preset", async () => {
       const project = requireState(generatedProject, "The project was not generated.");
-      const manifest = await readJson<{ preset: string; features: string[] }>(
+      const manifest = await readJson<{ initialPreset: string; features: string[] }>(
         join(project, ".agent-stack/manifest.json"),
       );
 
-      expect(manifest.preset).toBe("minimum");
+      expect(manifest.initialPreset).toBe("minimum");
       expect(manifest.features).toEqual(
         expect.arrayContaining([
           "typescript-node-pnpm",
@@ -147,12 +147,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         );
       });
 
-      Then("the generated project records the {string} preset selection", async () => {
+      Then("the generated project records {string} as its initial preset", async () => {
         const project = requireState(generatedProject, "The project was not generated.");
-        const manifest = await readJson<{ preset: string }>(
+        const manifest = await readJson<{ initialPreset: string }>(
           join(project, ".agent-stack/manifest.json"),
         );
-        expect(manifest.preset).toBe(example.preset.toLowerCase());
+        expect(manifest.initialPreset).toBe(example.preset.toLowerCase());
       });
 
       And("its shipping gates include every gate from the {string} preset", async () => {
@@ -218,12 +218,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       );
     });
 
-    Then("the generated project records the Medium preset selection", async () => {
+    Then("the generated project records Medium as its initial preset", async () => {
       const project = requireState(generatedProject, "The project was not generated.");
-      const manifest = await readJson<{ preset: string }>(
+      const manifest = await readJson<{ initialPreset: string }>(
         join(project, ".agent-stack/manifest.json"),
       );
-      expect(manifest.preset).toBe("medium");
+      expect(manifest.initialPreset).toBe("medium");
     });
 
     And(
@@ -847,12 +847,12 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       await expect(readFile(join(project, "tests/index.test.ts"), "utf8")).rejects.toThrow();
     });
 
-    And("the project records the merged Minimum preset selection", async () => {
+    And("the project records Minimum as its initial preset after merging", async () => {
       const project = requireState(generatedProject, "The project was not created.");
-      const manifest = await readJson<{ preset: string }>(
+      const manifest = await readJson<{ initialPreset: string }>(
         join(project, ".agent-stack/manifest.json"),
       );
-      expect(manifest.preset).toBe("minimum");
+      expect(manifest.initialPreset).toBe("minimum");
     });
 
     And("installing dependencies and running the project checks succeeds", async () => {

@@ -40,12 +40,12 @@ describe("generateProject", () => {
     expect(result.files).toContain(".agent-stack/manifest.json");
     const manifest = JSON.parse(
       await readFile(join(targetDirectory, ".agent-stack/manifest.json"), "utf8"),
-    ) as { preset: string; features: string[] };
+    ) as { initialPreset: string; features: string[] };
     const packageJson = JSON.parse(
       await readFile(join(targetDirectory, "package.json"), "utf8"),
     ) as { name: string; scripts: Record<string, string> };
 
-    expect(manifest.preset).toBe("minimum");
+    expect(manifest.initialPreset).toBe("minimum");
     expect(manifest.features).toContain("vitest");
     expect(packageJson.name).toBe("example-project");
     expect(Object.keys(packageJson.scripts)).toEqual(
@@ -61,12 +61,12 @@ describe("generateProject", () => {
 
     const manifest = JSON.parse(
       await readFile(join(targetDirectory, ".agent-stack/manifest.json"), "utf8"),
-    ) as { preset: string; features: string[] };
+    ) as { initialPreset: string; features: string[] };
     const packageJson = JSON.parse(
       await readFile(join(targetDirectory, "package.json"), "utf8"),
     ) as { devDependencies: Record<string, string>; scripts: Record<string, string> };
 
-    expect(manifest.preset).toBe("low");
+    expect(manifest.initialPreset).toBe("low");
     expect(manifest.features).toEqual(
       expect.arrayContaining(["vitest", "gitleaks", "dependency-audit"]),
     );
@@ -89,13 +89,9 @@ describe("generateProject", () => {
       await generateProject({ targetDirectory, selection });
       const policy = JSON.parse(
         await readFile(join(targetDirectory, ".agent-stack/shipping-gates.json"), "utf8"),
-      ) as { preset: string; recommendation?: string; gates: string[] };
+      ) as { gates: string[] };
 
-      expect(policy.preset).toBe(selection.preset);
-      expect(policy.gates).toEqual(shippingGates(selection));
-      if (selection.preset === "medium") {
-        expect(policy.recommendation).toBe("default-production");
-      }
+      expect(policy).toEqual({ gates: shippingGates(selection) });
     }
 
     const highPackage = JSON.parse(

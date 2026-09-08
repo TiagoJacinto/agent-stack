@@ -14,7 +14,7 @@ Feature: Create an agent stack project
       | agent context        | README, AGENTS, glossary, and progress manifest   |
       | automated protection | GitHub Actions, gitleaks, and dependency auditing |
       | quality policy       | Minimum deterministic shipping gates and agent budget |
-    And the generated project records the Minimum preset selection
+    And the generated project records Minimum as its initial preset
     And its shipping gates require successful build, formatting, linting, type checking, existing tests, secret scanning, dependency auditing, a narrow change scope, and a basic agent compute budget
     And the generated project contains this Oxlint configuration:
       """ts
@@ -32,7 +32,7 @@ Feature: Create an agent stack project
   Scenario Outline: Generate a project with a progressively stronger shipping preset
     Given an empty workspace for a new project
     When I create "<project>" with the "<preset>" preset
-    Then the generated project records the "<preset>" preset selection
+    Then the generated project records "<preset>" as its initial preset
     And its shipping gates include every gate from the "<previous preset>" preset
     And its shipping gates add:
       | gate |
@@ -54,7 +54,7 @@ Feature: Create an agent stack project
   Scenario: Recommend Medium as the default shipping preset
     Given an empty workspace for a new project
     When I create "medium-project" with the Medium preset
-    Then the generated project records the Medium preset selection
+    Then the generated project records Medium as its initial preset
     And the generated project documentation identifies Medium as the default production recommendation
 
   Scenario: Select individual features when no preset is supplied
@@ -240,7 +240,7 @@ Feature: Create an agent stack project
     And agent-stack documentation is added in a managed Markdown block
     And missing Minimum capabilities are added
     And merge-only generation does not add example source code or example tests
-    And the project records the merged Minimum preset selection
+    And the project records Minimum as its initial preset after merging
     And installing dependencies and running the project checks succeeds
 
   Scenario: Merge both supported linter configurations
