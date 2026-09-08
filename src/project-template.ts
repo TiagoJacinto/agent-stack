@@ -86,7 +86,7 @@ export function projectFiles(
     `;
   }
   if (has(selection, "agent-context")) {
-    Object.assign(files, agentContextFiles(selection));
+    Object.assign(files, agentContextFiles());
   }
 
   return files;
@@ -403,7 +403,7 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
   `;
 }
 
-function agentContextFiles(selection: FeatureSelection): Readonly<Record<string, string>> {
+function agentContextFiles(): Readonly<Record<string, string>> {
   return {
     "AGENTS.md": text`
       # Agent instructions
@@ -426,7 +426,6 @@ function agentContextFiles(selection: FeatureSelection): Readonly<Record<string,
       schemaVersion: 1,
       currentMilestone: "project-generated",
       completed: ["project-generated"],
-      selectedFeatures: selection.features,
       next: "Define the first product feature before adding implementation code.",
     }),
   };

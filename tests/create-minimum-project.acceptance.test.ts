@@ -91,6 +91,11 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
           "anti-slop",
         ]),
       );
+
+      const progress = await readJson<Record<string, unknown>>(
+        join(project, ".agent-stack/progress.json"),
+      );
+      expect(progress).not.toHaveProperty("selectedFeatures");
     });
 
     And(
