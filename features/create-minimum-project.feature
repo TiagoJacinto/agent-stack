@@ -29,6 +29,12 @@ Feature: Create an agent stack project
       """
     And installing dependencies and running the project checks succeeds
 
+  Scenario: Scaffold a project with Bun's create command
+    Given an empty workspace for a new project
+    When I create "bun-create-project" with the Minimum preset using Bun's create command
+    Then the generated project records Minimum as its initial preset
+    And installing dependencies and running the project checks succeeds
+
   Scenario Outline: Generate a project with a progressively stronger shipping preset
     Given an empty workspace for a new project
     When I create "<project>" with the "<preset>" preset

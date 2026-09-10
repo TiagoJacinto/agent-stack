@@ -124,6 +124,39 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     });
   });
 
+  Scenario("Scaffold a project with Bun's create command", ({ Given, When, Then, And }) => {
+    Given("an empty workspace for a new project", async () => {
+      workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+    });
+
+    When(
+      "I create {string} with the Minimum preset using Bun's create command",
+      async (_context, projectName: string) => {
+        const currentWorkspace = requireState(workspace, "The workspace was not created.");
+        generatedProject = join(currentWorkspace, projectName);
+        await run(
+          process.execPath,
+          [resolve("dist/cli.js"), projectName, "--preset", "minimum"],
+          currentWorkspace,
+        );
+      },
+    );
+
+    Then("the generated project records Minimum as its initial preset", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      const manifest = await readJson<{ initialPreset: string }>(
+        join(project, ".agent-stack/manifest.json"),
+      );
+      expect(manifest.initialPreset).toBe("minimum");
+    });
+
+    And("installing dependencies and running the project checks succeeds", async () => {
+      const project = requireState(generatedProject, "The project was not generated.");
+      await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "install"], project);
+      await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
+    });
+  });
+
   ScenarioOutline(
     "Generate a project with a progressively stronger shipping preset",
     ({ Given, When, Then, And }, example) => {
@@ -788,7 +821,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         const output = requireState(failedOutput, "The CLI did not run.");
         const project = requireState(generatedProject, "The project was not named.");
         expect(output.stderr).toContain(
-          `create-agent-stack: Target directory is not empty:\n${project}`,
+          `create-better-agent-stack: Target directory is not empty:\n${project}`,
         );
       });
     },

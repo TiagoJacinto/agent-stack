@@ -67,15 +67,13 @@ async function main(): Promise<void> {
 }
 
 function parseArguments(arguments_: readonly string[]): CliOptions {
-  const command = arguments_[0];
-  if (command !== "create" && command !== "merge") {
-    throw new Error('The first argument must be "create" or "merge".');
-  }
-
+  const firstArgument = arguments_[0];
+  const hasExplicitCommand = firstArgument === "create" || firstArgument === "merge";
+  const command: CliOptions["command"] = hasExplicitCommand ? firstArgument : "create";
   let targetDirectory: string | undefined;
   let preset: string | undefined;
 
-  for (let index = 1; index < arguments_.length; index += 1) {
+  for (let index = hasExplicitCommand ? 1 : 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
     if (argument === "--preset") {
       preset = arguments_[index + 1];
@@ -223,6 +221,6 @@ function readPipedInput(): Promise<string> {
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`create-agent-stack: ${message}\n`);
+  process.stderr.write(`create-better-agent-stack: ${message}\n`);
   process.exitCode = 1;
 });

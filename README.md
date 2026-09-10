@@ -16,7 +16,25 @@ The preset ladder supports Minimum, Low, Medium, High, and Maximum, plus individ
 3. To add capabilities to an existing project, run `node dist/cli.js merge path/to/project --preset minimum` (or omit `--preset` to choose features interactively).
 4. Enter the project directory, install dependencies with its selected package manager, and run its `check` script.
 
-The published commands are `pnpm dlx @tiagojacinto/create-agent-stack create my-project` and `pnpm dlx @tiagojacinto/create-agent-stack merge path/to/project`.
+### Create a project with Bun
+
+```bash
+bun create better-agent-stack
+```
+
+This starts the interactive project chooser. To provide the destination and preset directly:
+
+```bash
+bun create better-agent-stack my-project --preset minimum
+```
+
+The package can also be run without installing globally:
+
+```bash
+bunx create-better-agent-stack my-project --preset minimum
+```
+
+The published command is also available through `pnpm dlx create-better-agent-stack create my-project` or `pnpm dlx create-better-agent-stack merge path/to/project`.
 
 When `--preset` is omitted, the CLI first lets you choose pnpm or Bun, then asks about each top-level optional feature: formatting, linting, ESLint, Ultracite, unit testing, agent context, GitHub Actions, secret scanning, dependency auditing, and mutation testing. Selecting Vitest reveals property-based testing, selecting Oxlint reveals Anti-slop, and selecting Anti-slop reveals Anti-slop Effect. Type `y` to include a feature. TypeScript, Node.js, the selected package manager, and the core scripts are always included. Selecting a feature also selects its dependencies; for example, secret scanning includes GitHub Actions and Anti-slop includes Oxlint.
 
@@ -28,9 +46,21 @@ The generated project records and uses the package manager selected during inter
 
 Merge reconciles supported artifacts semantically: package scripts and dependencies by name, JSON configuration by key and array entry, linter imports and extensions, workflow triggers/jobs/steps, and Markdown inside `agent-stack` managed blocks. User-owned values are preserved; incompatible JSON values report the exact key and prevent all writes. Repeating the same merge is idempotent.
 
+## Publish to npm
+
+The package is public and publishes as `create-better-agent-stack`. To publish a local version manually:
+
+```bash
+bun install --frozen-lockfile
+bun run check
+npm publish --access public
+```
+
+You need to be logged in to npm (`npm login`). Do not commit an npm token.
+
 ## Automatic releases
 
-Release Please turns Conventional Commits on `main` into a release pull request. Merging that pull request updates `package.json` and `CHANGELOG.md`, creates the GitHub release and tag, then publishes `@tiagojacinto/create-agent-stack` to npm after `bun run check` passes.
+Release Please turns Conventional Commits on `main` into a release pull request. Merging that pull request updates `package.json` and `CHANGELOG.md`, creates the GitHub release and tag, then publishes `create-better-agent-stack` to npm after `bun run check` passes.
 
 Commit prefixes determine the version:
 

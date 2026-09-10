@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "@tiagojacinto/create-agent-stack",
+      "package-name": "create-better-agent-stack",
       "changelog-path": "CHANGELOG.md"
     }
   }

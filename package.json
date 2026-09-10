@@ -1,5 +1,5 @@
 {
-  "name": "@tiagojacinto/create-agent-stack",
+  "name": "create-better-agent-stack",
   "version": "1.5.0",
   "description": "Progressively scaffold verified, agent-ready TypeScript projects.",
   "repository": {
@@ -8,14 +8,18 @@
   },
   "type": "module",
   "bin": {
-    "create-agent-stack": "dist/cli.js"
+    "create-better-agent-stack": "dist/cli.js"
   },
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
