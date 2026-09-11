@@ -1,6 +1,6 @@
 {
   "name": "create-better-agent-stack",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Progressively scaffold verified, agent-ready TypeScript projects.",
   "repository": {
     "type": "git",
