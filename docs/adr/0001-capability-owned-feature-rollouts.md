@@ -1,0 +1,3 @@
+# Capability-owned feature rollouts
+
+The capability inventory owns rollout identity and meaning. A capability may have no rollout or one rollout, and each rollout belongs to exactly one capability. The project records a provider-neutral key, purpose, owner, lifecycle, value type, and safe default; LaunchDarkly initially owns dynamic targeting and rollout settings. Applications use a provider-neutral typed evaluation contract with explicit context, and use the declared safe default when evaluation fails or runs offline. Keep provider SDK concepts inside its adapter. Changes to rollout settings or lifecycle must be traceable to the capability and reviewed when they change exposure or risk assumptions. Routine per-context evaluations do not trigger reviews.
