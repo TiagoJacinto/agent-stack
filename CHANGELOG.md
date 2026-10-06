@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/TiagoJacinto/agent-stack/compare/create-better-agent-stack-v1.6.0...create-better-agent-stack-v2.0.0) (2026-10-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* positional create destinations are replaced by --name or an interactive project-name prompt.
+
+### Features
+
+* add named and non-interactive project creation ([2c7f033](https://github.com/TiagoJacinto/agent-stack/commit/2c7f033de81137ea8c82033e60efbc26ead99076))
+
 ## [1.6.0](https://github.com/TiagoJacinto/agent-stack/compare/create-better-agent-stack-v1.5.0...create-better-agent-stack-v1.6.0) (2026-09-10)
 
 
