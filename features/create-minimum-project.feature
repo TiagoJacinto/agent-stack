@@ -81,6 +81,9 @@ Feature: Create an agent stack project
       | github-actions   | GitHub Actions      |           |
       | gitleaks         | Secret scanning     |           |
       | dependency-audit | Dependency auditing |           |
+      | vite-react       | Vite + React        |           |
+      | react-compiler-babel | React Compiler (Babel) | vite-react |
+      | react-compiler-oxc | React Compiler (Oxc, experimental) | vite-react |
     When I select these features:
       | feature  |
       | oxfmt    |
@@ -283,3 +286,44 @@ Feature: Create an agent stack project
     When I run the merge command for that project
     Then the command fails with the conflicting artifact and configuration key
     And no project files are changed
+
+  Scenario: Generate a Vite React project without a React Compiler
+    Given an empty workspace for a new project
+    When I create "vite-react-project" without a preset
+    And I select these features:
+      | feature    |
+      | vite-react |
+    Then the generated project uses Vite for development and production builds
+    And neither React Compiler integration is configured
+    And installing dependencies and running the Vite React project checks succeeds
+
+  Scenario Outline: Generate a Vite React project with a selected React Compiler
+    Given an empty workspace for a new project
+    When I create "<project>" without a preset
+    And I select the "<compiler>" React Compiler option
+    Then the generated project configures the "<compiler>" integration
+    And the generated project declares the dependencies required for the "<compiler>" integration
+    And installing dependencies and running the Vite React project checks succeeds
+
+    Examples:
+      | project       | compiler |
+      | babel-project | Babel    |
+      | oxc-project   | Oxc      |
+
+  Scenario: Reject selecting both React Compiler integrations
+    Given an empty workspace for a new project
+    When I create "conflicting-project" without a preset
+    And I select these features:
+      | feature             |
+      | vite-react          |
+      | react-compiler-babel |
+      | react-compiler-oxc   |
+    Then the command reports that the React Compiler integrations are mutually exclusive
+    And the command does not generate a project
+
+  Scenario: Run a Vite React project with Bun and the Oxc compiler
+    Given an empty workspace for a new project
+    When I create "bun-react-project" without a preset
+    And I choose Bun with Vite + React, Vitest, and the Oxc React Compiler
+    Then the generated project's check script runs the Vite build and Vitest through Bun's package-script runner
+    And installing dependencies and running the Bun Vite React project checks succeeds

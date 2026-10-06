@@ -3,6 +3,7 @@ import {
   shippingGates,
   type FeatureId,
   type FeatureSelection,
+  type PackageManager,
 } from "./catalog.js";
 import { antiSlopAssets } from "./anti-slop-assets.js";
 
@@ -35,18 +36,6 @@ export function projectFiles(
   const files: Record<string, string> = {
     "package.json": packageJson(projectName, selection),
     "tsconfig.json": tsconfig(selection),
-    "tsconfig.build.json": json({
-      extends: "./tsconfig.json",
-      compilerOptions: {
-        outDir: "dist",
-        rootDir: "src",
-        declaration: true,
-        sourceMap: true,
-        types: ["node"],
-      },
-      include: ["src/**/*.ts"],
-    }),
-    "src/index.ts": sourceEntryPoint(),
     ".gitignore": text`
       node_modules/
       dist/
@@ -58,6 +47,23 @@ export function projectFiles(
     "README.md": projectReadme(projectName, selection),
     ".agent-stack/manifest.json": manifest(selection),
   };
+
+  if (has(selection, "vite-react")) {
+    Object.assign(files, viteReactFiles(selection));
+  } else {
+    files["tsconfig.build.json"] = json({
+      extends: "./tsconfig.json",
+      compilerOptions: {
+        outDir: "dist",
+        rootDir: "src",
+        declaration: true,
+        sourceMap: true,
+        types: ["node"],
+      },
+      include: ["src/**/*.ts"],
+    });
+    files["src/index.ts"] = sourceEntryPoint();
+  }
 
   if (selection.mode === "preset") {
     files[".agent-stack/shipping-gates.json"] = shippingGatePolicy(selection);
@@ -73,8 +79,8 @@ export function projectFiles(
     files["eslint.config.mjs"] = eslintConfig(selection);
   }
   if (has(selection, "vitest")) {
-    files["vitest.config.ts"] = vitestConfig();
-    files["tests/index.test.ts"] = exampleTest();
+    files["vitest.config.ts"] = vitestConfig(selection);
+    files["tests/index.test.ts"] = exampleTest(selection);
   }
   if (has(selection, "mutation-testing")) {
     files["stryker.config.mjs"] = strykerConfig();
@@ -98,25 +104,58 @@ export function projectFiles(
 }
 
 function packageJson(projectName: string, selection: FeatureSelection): string {
-  const scripts: Record<string, string> = {
-    dev: "tsx watch src/index.ts",
-    build: "tsc -p tsconfig.build.json",
-    typecheck: "tsc --noEmit",
-  };
+  const viteReact = has(selection, "vite-react");
+  const scripts: Record<string, string> = viteReact
+    ? {
+        dev: "vite",
+        build: "vite build",
+        preview: "vite preview",
+        typecheck: "tsc --noEmit",
+      }
+    : {
+        dev: "tsx watch src/index.ts",
+        build: "tsc -p tsconfig.build.json",
+        typecheck: "tsc --noEmit",
+      };
+  const dependencies: Record<string, string> = viteReact
+    ? { react: "^19.0.0", "react-dom": "^19.0.0" }
+    : {};
   const devDependencies: Record<string, string> = {
     "@types/node": "^22.15.30",
-    tsx: "^4.20.3",
     typescript: "^5.8.3",
   };
+  if (!viteReact) devDependencies.tsx = "^4.20.3";
   const checks: string[] = [];
   const lintCommands: string[] = [];
-  const lintTargets = has(selection, "vitest") ? "src tests" : "src";
+  const lintTargets = [
+    "src",
+    ...(has(selection, "vitest") ? ["tests"] : []),
+    ...(viteReact ? ["vite.config.ts"] : []),
+  ].join(" ");
 
+  if (viteReact) {
+    Object.assign(devDependencies, {
+      "@types/react": "^19.0.0",
+      "@types/react-dom": "^19.0.0",
+      "@vitejs/plugin-react": "^6.1.0",
+      vite: "^8.0.0",
+    });
+    if (has(selection, "react-compiler-babel")) {
+      Object.assign(devDependencies, {
+        "@babel/core": "^7.29.0",
+        "@rolldown/plugin-babel": "^0.2.4",
+        "babel-plugin-react-compiler": "^1.0.0",
+      });
+    }
+    if (has(selection, "react-compiler-oxc")) {
+      devDependencies["oxc-transform-react"] = "^0.145.0";
+    }
+  }
   if (has(selection, "oxfmt")) {
     scripts.format = "oxfmt .";
     scripts["format:check"] = "oxfmt --check .";
     devDependencies.oxfmt = "^0.16.0";
-    checks.push(`${selection.packageManager} format:check`);
+    checks.push(packageScriptCommand(selection.packageManager, "format:check"));
   }
   if (has(selection, "oxlint")) {
     devDependencies.oxlint = "^1.81.0";
@@ -131,7 +170,7 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
   }
   if (lintCommands.length > 0) {
     scripts.lint = lintCommands.join(" && ");
-    checks.push(`${selection.packageManager} lint`);
+    checks.push(packageScriptCommand(selection.packageManager, "lint"));
   }
   if (has(selection, "anti-slop") && !has(selection, "ultracite")) {
     devDependencies["@oxlint/plugins"] = "1.81.0";
@@ -140,12 +179,13 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
     devDependencies.ultracite = "^7.10.8";
   }
 
-  checks.push(`${selection.packageManager} typecheck`);
+  checks.push(packageScriptCommand(selection.packageManager, "typecheck"));
+  if (viteReact) checks.push(packageScriptCommand(selection.packageManager, "build"));
 
   if (has(selection, "vitest")) {
     scripts.test = "vitest run";
-    devDependencies.vitest = "^3.2.2";
-    checks.push(`${selection.packageManager} test`);
+    devDependencies.vitest = viteReact ? "^4.1.0" : "^3.2.2";
+    checks.push(packageScriptCommand(selection.packageManager, "test"));
   }
   if (has(selection, "property-testing")) {
     devDependencies["@fast-check/vitest"] = "^0.3.0";
@@ -158,21 +198,24 @@ function packageJson(projectName: string, selection: FeatureSelection): string {
   }
   scripts.check = checks.join(" && ");
 
-  return json({
+  const packageContents: Record<string, unknown> = {
     name: projectName,
     version: "0.1.0",
     private: true,
     type: "module",
     scripts,
-    engines: { node: ">=22" },
+    engines: { node: viteReact ? ">=22.12" : ">=22" },
     packageManager: `${selection.packageManager}@${packageManagerVersions[selection.packageManager]}`,
     devDependencies,
-  });
+  };
+  if (viteReact) packageContents.dependencies = dependencies;
+  return json(packageContents);
 }
 
 function tsconfig(selection: FeatureSelection): string {
-  const include = ["src/**/*.ts"];
-  const types = ["node"];
+  const viteReact = has(selection, "vite-react");
+  const include = viteReact ? ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"] : ["src/**/*.ts"];
+  const types = viteReact ? ["node", "vite/client"] : ["node"];
   if (has(selection, "vitest")) {
     include.push("tests/**/*.ts");
     types.push("vitest/globals");
@@ -181,8 +224,9 @@ function tsconfig(selection: FeatureSelection): string {
   return json({
     compilerOptions: {
       target: "ES2023",
-      module: "NodeNext",
-      moduleResolution: "NodeNext",
+      module: viteReact ? "ESNext" : "NodeNext",
+      moduleResolution: viteReact ? "Bundler" : "NodeNext",
+      jsx: viteReact ? "react-jsx" : undefined,
       strict: true,
       noUncheckedIndexedAccess: true,
       exactOptionalPropertyTypes: true,
@@ -210,6 +254,91 @@ function sourceEntryPoint(): string {
     ) {
       process.stdout.write(\`\${greet("agent")}\\n\`);
     }
+  `;
+}
+
+function viteReactFiles(selection: FeatureSelection): Readonly<Record<string, string>> {
+  return {
+    "index.html": text`
+      <!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>React app</title>
+        </head>
+        <body>
+          <div id="root"></div>
+          <script type="module" src="/src/main.tsx"></script>
+        </body>
+      </html>
+    `,
+    "src/App.tsx": text`
+      import { useState } from "react";
+
+      export function App() {
+        const [count, setCount] = useState(0);
+
+        return (
+          <main>
+            <h1>Vite + React</h1>
+            <button onClick={() => setCount((current) => current + 1)}>
+              Count is {count}
+            </button>
+          </main>
+        );
+      }
+    `,
+    "src/main.tsx": text`
+      import { StrictMode } from "react";
+      import { createRoot } from "react-dom/client";
+
+      import { App } from "./App";
+
+      const container = document.getElementById("root");
+      if (container === null) throw new Error("The app root element is missing.");
+
+      createRoot(container).render(
+        <StrictMode>
+          <App />
+        </StrictMode>,
+      );
+    `,
+    "vite.config.ts": viteConfig(selection),
+  };
+}
+
+function viteConfig(selection: FeatureSelection): string {
+  if (has(selection, "react-compiler-babel")) {
+    return text`
+      import { defineConfig } from "vite";
+      import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+      import babel from "@rolldown/plugin-babel";
+
+      export default defineConfig({
+        plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+      });
+    `;
+  }
+
+  if (has(selection, "react-compiler-oxc")) {
+    return text`
+      import { defineConfig } from "vite";
+      import react from "@vitejs/plugin-react";
+
+      export default defineConfig({
+        plugins: [react({ compiler: true })],
+      });
+    `;
+  }
+
+  return text`
+    import { defineConfig } from "vite";
+    import react from "@vitejs/plugin-react";
+
+    export default defineConfig({
+      plugins: [react()],
+    });
   `;
 }
 
@@ -274,7 +403,23 @@ function oxlintConfig(selection: FeatureSelection): string {
   ].join("\n");
 }
 
-function vitestConfig(): string {
+function vitestConfig(selection: FeatureSelection): string {
+  if (has(selection, "vite-react")) {
+    return text`
+      import { defineConfig, mergeConfig } from "vitest/config";
+      import viteConfig from "./vite.config.ts";
+
+      export default mergeConfig(
+        viteConfig,
+        defineConfig({
+          test: {
+            include: ["tests/**/*.test.ts"],
+          },
+        }),
+      );
+    `;
+  }
+
   return text`
     import { defineConfig } from "vitest/config";
 
@@ -297,7 +442,25 @@ function strykerConfig(): string {
   `;
 }
 
-function exampleTest(): string {
+function exampleTest(selection: FeatureSelection): string {
+  if (has(selection, "vite-react")) {
+    return text`
+      import { createElement } from "react";
+      import { renderToStaticMarkup } from "react-dom/server";
+      import { describe, expect, it } from "vitest";
+
+      import { App } from "../src/App";
+
+      describe("App", () => {
+        it("renders the starter heading and count button", () => {
+          const markup = renderToStaticMarkup(createElement(App));
+          expect(markup).toContain("<h1>Vite + React</h1>");
+          expect(markup).toContain("Count is 0");
+        });
+      });
+    `;
+  }
+
   return text`
     import { describe, expect, it } from "vitest";
 
@@ -371,18 +534,26 @@ function shippingGatePolicy(selection: Extract<FeatureSelection, { mode: "preset
 }
 
 function projectReadme(projectName: string, selection: FeatureSelection): string {
+  const viteReact = has(selection, "vite-react");
+  const runScript = (script: string): string =>
+    packageScriptCommand(selection.packageManager, script);
   const origin =
     selection.mode === "preset"
       ? `the ${selection.preset[0]?.toUpperCase()}${selection.preset.slice(1)} preset`
       : "individually selected features";
   const commands = [
-    `- \`${selection.packageManager} dev\` — run the entry point in watch mode.`,
-    `- \`${selection.packageManager} build\` — compile production output.`,
-    has(selection, "vitest") ? `- \`${selection.packageManager} test\` — run unit tests.` : "",
+    viteReact
+      ? `- \`${runScript("dev")}\` — start the Vite development server.`
+      : `- \`${runScript("dev")}\` — run the entry point in watch mode.`,
+    viteReact
+      ? `- \`${runScript("build")}\` — create the production browser bundle.`
+      : `- \`${runScript("build")}\` — compile production output.`,
+    viteReact ? `- \`${runScript("preview")}\` — preview the production bundle.` : "",
+    has(selection, "vitest") ? `- \`${runScript("test")}\` — run unit tests.` : "",
     has(selection, "mutation-testing")
-      ? `- \`${selection.packageManager} mutation\` — run Stryker mutation tests.`
+      ? `- \`${runScript("mutation")}\` — run Stryker mutation tests.`
       : "",
-    `- \`${selection.packageManager} check\` — run every configured project check.`,
+    `- \`${runScript("check")}\` — run every configured project check.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -394,7 +565,7 @@ function projectReadme(projectName: string, selection: FeatureSelection): string
 
     ## Requirements
 
-    - Node.js 22 or newer
+    - Node.js ${viteReact ? "22.12 or newer" : "22 or newer"}
     - ${selection.packageManager} ${packageManagerVersions[selection.packageManager]}
 
     ## Selected features
@@ -467,6 +638,10 @@ function manifest(selection: FeatureSelection): string {
 
 function has(selection: FeatureSelection, feature: FeatureId): boolean {
   return selection.features.includes(feature);
+}
+
+function packageScriptCommand(packageManager: PackageManager, script: string): string {
+  return packageManager === "bun" ? `bun run ${script}` : `pnpm ${script}`;
 }
 
 function json(value: unknown): string {

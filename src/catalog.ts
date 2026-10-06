@@ -47,6 +47,19 @@ export const featureCatalog = [
     parent: null,
     dependencies: ["github-actions"],
   },
+  { id: "vite-react", label: "Vite + React", parent: null, dependencies: [] },
+  {
+    id: "react-compiler-babel",
+    label: "React Compiler (Babel)",
+    parent: "vite-react",
+    dependencies: ["vite-react"],
+  },
+  {
+    id: "react-compiler-oxc",
+    label: "React Compiler (Oxc, experimental)",
+    parent: "vite-react",
+    dependencies: ["vite-react"],
+  },
 ] as const;
 
 export type OptionalFeatureId = (typeof featureCatalog)[number]["id"];
@@ -286,6 +299,10 @@ export function resolveFeatures(
   requested: readonly OptionalFeatureId[],
   packageManager: PackageManager = "pnpm",
 ): readonly FeatureId[] {
+  if (requested.includes("react-compiler-babel") && requested.includes("react-compiler-oxc")) {
+    throw new Error("React Compiler integrations are mutually exclusive. Select only one backend.");
+  }
+
   const selected = new Set<OptionalFeatureId>();
 
   const include = (id: OptionalFeatureId): void => {

@@ -12,33 +12,45 @@ The preset ladder supports Minimum, Low, Medium, High, and Maximum, plus individ
 ## Current usage
 
 1. Build with `bun run build`.
-2. Run `node dist/cli.js create my-project --preset <level>`, where `<level>` is `minimum`, `low`, `medium`, `high`, or `maximum`. Omit `--preset` to choose individual features interactively.
+2. Run `node dist/cli.js create --name my-project --preset <level>`, where `<level>` is `minimum`, `low`, `medium`, `high`, or `maximum`. Omit `--preset` to choose individual features interactively.
 3. To add capabilities to an existing project, run `node dist/cli.js merge path/to/project --preset minimum` (or omit `--preset` to choose features interactively).
 4. Enter the project directory, install dependencies with its selected package manager, and run its `check` script.
 
 ### Create a project with Bun
 
+Use `--name` to set the project name explicitly, or omit it to be prompted:
+
 ```bash
+bun create better-agent-stack --name my-project
 bun create better-agent-stack
 ```
 
-This starts the interactive project chooser. To provide the destination and preset directly:
+To select a preset directly:
 
 ```bash
-bun create better-agent-stack my-project --preset minimum
+bun create better-agent-stack --name my-project --preset minimum
 ```
 
 The package can also be run without installing globally:
 
 ```bash
-bunx create-better-agent-stack my-project --preset minimum
+bunx create-better-agent-stack --name my-project --preset minimum
 ```
 
-The published command is also available through `pnpm dlx create-better-agent-stack create my-project` or `pnpm dlx create-better-agent-stack merge path/to/project`.
+The published command is also available through `pnpm dlx create-better-agent-stack create --name my-project --preset minimum` or `pnpm dlx create-better-agent-stack merge path/to/project`.
 
-When `--preset` is omitted, the CLI first lets you choose pnpm or Bun, then asks about each top-level optional feature: formatting, linting, ESLint, Ultracite, unit testing, agent context, GitHub Actions, secret scanning, dependency auditing, and mutation testing. Selecting Vitest reveals property-based testing, selecting Oxlint reveals Anti-slop, and selecting Anti-slop reveals Anti-slop Effect. Type `y` to include a feature. TypeScript, Node.js, the selected package manager, and the core scripts are always included. Selecting a feature also selects its dependencies; for example, secret scanning includes GitHub Actions and Anti-slop includes Oxlint.
+Use `--no-interactive` with `--preset` or `--features` to run without prompts. The package manager defaults to pnpm; choose Bun with `--package-manager bun`:
 
-If Ultracite is selected without a linter, the CLI asks which backend to add after the feature questions. Oxlint is the default. If Oxlint or ESLint was already selected, that choice becomes Ultracite's backend without another question. Selecting both generates both configurations. Oxlint and Ultracite use one composed `oxlint.config.ts` file. Anti-slop without Ultracite vendors the plugin under `tools/oxlint/anti-slop/`. If Ultracite and Anti-slop Effect are selected together, the CLI warns that the Effect extension is unsupported and asks for confirmation before continuing.
+```bash
+bun create better-agent-stack --name my-project --no-interactive --features oxfmt,oxlint,vitest --package-manager bun
+bun create better-agent-stack --name my-app --no-interactive --preset minimum --package-manager bun
+```
+
+`--features` accepts a comma-separated list of optional feature IDs from the chooser. Without `--no-interactive`, those features are preselected and the chooser asks about the remaining features. With `--no-interactive`, `none` selects the core TypeScript setup and unlisted optional features stay off. Dependencies are included automatically. `--preset` and `--features` cannot be combined. `--name` accepts lowercase letters, numbers, and hyphens and creates a child directory in the current working directory; positional destination arguments are no longer accepted. Interactive creation prompts for a missing name, while non-interactive creation requires `--name` and either `--preset` or `--features`; invalid or unsupported combinations fail instead of prompting. Feature-selection options also work with `merge`, which continues to take the existing project path as its positional argument.
+
+When `--preset` is omitted, the CLI first lets you choose pnpm or Bun, then asks about each top-level optional feature: formatting, linting, ESLint, Ultracite, unit testing, agent context, GitHub Actions, secret scanning, dependency auditing, mutation testing, and Vite + React. Selecting Vitest reveals property-based testing, selecting Oxlint reveals Anti-slop, selecting Anti-slop reveals Anti-slop Effect, and selecting Vite + React reveals the Babel-based and experimental Oxc-based React Compiler integrations. Choose at most one React Compiler integration. Type `y` to include a feature. TypeScript, Node.js, the selected package manager, and core scripts are always included. Selecting a feature also selects its dependencies; for example, secret scanning includes GitHub Actions and Anti-slop includes Oxlint.
+
+If Ultracite is selected without a linter, the interactive CLI asks which backend to add after the feature questions. Oxlint is the default. Non-interactive `--features ultracite` also resolves Oxlint automatically. If Oxlint or ESLint was already selected, that choice becomes Ultracite's backend without another question. Selecting both generates both configurations. Oxlint and Ultracite use one composed `oxlint.config.ts` file. Anti-slop without Ultracite vendors the plugin under `tools/oxlint/anti-slop/`. If Ultracite and Anti-slop Effect are selected together, the CLI warns that the Effect extension is unsupported and asks for confirmation before continuing.
 
 Every preset generates `.agent-stack/shipping-gates.json`, a cumulative release policy for coding agents. Minimum establishes the build, formatting, linting, type-checking, test, secret-scanning, dependency-audit, narrow-scope, and compute-budget floor. Medium is the default recommendation for production projects. High adds the available property-based and mutation-testing tooling; Maximum records the additional independent-review and high-assurance gates. The generated README directs agents to review this policy before declaring code shippable. The policy is currently declarative: see [ROADMAP.md](ROADMAP.md) for the implementation status and planned enforcement work.
 

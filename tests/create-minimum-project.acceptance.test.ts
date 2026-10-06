@@ -59,7 +59,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       generatedProject = join(currentWorkspace, projectName);
       await run(
         process.execPath,
-        [resolve("dist/cli.js"), "create", projectName, "--preset", "minimum"],
+        [resolve("dist/cli.js"), "create", "--name", projectName, "--preset", "minimum"],
         currentWorkspace,
       );
     });
@@ -136,7 +136,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         generatedProject = join(currentWorkspace, projectName);
         await run(
           process.execPath,
-          [resolve("dist/cli.js"), projectName, "--preset", "minimum"],
+          [resolve("dist/cli.js"), "--name", projectName, "--preset", "minimum"],
           currentWorkspace,
         );
       },
@@ -172,6 +172,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
           [
             resolve("dist/cli.js"),
             "create",
+            "--name",
             example.project,
             "--preset",
             example.preset.toLowerCase(),
@@ -246,7 +247,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       generatedProject = join(currentWorkspace, projectName);
       await run(
         process.execPath,
-        [resolve("dist/cli.js"), "create", projectName, "--preset", "medium"],
+        [resolve("dist/cli.js"), "create", "--name", projectName, "--preset", "medium"],
         currentWorkspace,
       );
     });
@@ -305,6 +306,17 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
             { feature: "github-actions", label: "GitHub Actions", parent: "" },
             { feature: "gitleaks", label: "Secret scanning", parent: "" },
             { feature: "dependency-audit", label: "Dependency auditing", parent: "" },
+            { feature: "vite-react", label: "Vite + React", parent: "" },
+            {
+              feature: "react-compiler-babel",
+              label: "React Compiler (Babel)",
+              parent: "vite-react",
+            },
+            {
+              feature: "react-compiler-oxc",
+              label: "React Compiler (Oxc, experimental)",
+              parent: "vite-react",
+            },
           ]);
         },
       );
@@ -313,7 +325,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         const project = requireState(generatedProject, "The project was not named.");
         const selected = new Set(rows.map(({ feature }) => feature));
         interactiveOutput = await runInteractive(
-          [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+          [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
           requireState(workspace, "The workspace was not created."),
           featureInput(selected),
         );
@@ -339,10 +351,13 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
 
       And("unselected optional features are absent", async () => {
         const project = requireState(generatedProject, "The project was not generated.");
-        const packageJson = await readJson<{ devDependencies: Record<string, string> }>(
-          join(project, "package.json"),
-        );
+        const packageJson = await readJson<{
+          dependencies: Record<string, string>;
+          devDependencies: Record<string, string>;
+        }>(join(project, "package.json"));
         expect(packageJson.devDependencies).not.toHaveProperty("oxlint");
+        expect(packageJson.devDependencies).not.toHaveProperty("vite");
+        expect(packageJson.dependencies ?? {}).not.toHaveProperty("react");
         await expect(readFile(join(project, "AGENTS.md"), "utf8")).rejects.toThrow();
       });
 
@@ -372,6 +387,16 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         expect(hierarchy.filter(({ parent }) => parent.length > 0)).toEqual([
           { feature: "anti-slop", label: "Anti-slop", parent: "oxlint" },
           { feature: "anti-slop-effect", label: "Anti-slop Effect", parent: "anti-slop" },
+          {
+            feature: "react-compiler-babel",
+            label: "React Compiler (Babel)",
+            parent: "vite-react",
+          },
+          {
+            feature: "react-compiler-oxc",
+            label: "React Compiler (Oxc, experimental)",
+            parent: "vite-react",
+          },
         ]);
       });
 
@@ -402,7 +427,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       const currentWorkspace = requireState(workspace, "The workspace was not created.");
       generatedProject = join(currentWorkspace, projectName);
       chooserOutput = await runInteractive(
-        [resolve("dist/cli.js"), "create", "package-manager-chooser-probe"],
+        [resolve("dist/cli.js"), "create", "--name", "package-manager-chooser-probe"],
         currentWorkspace,
         featureInput(new Set()),
       );
@@ -434,7 +459,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
       const project = requireState(generatedProject, "The project was not named.");
       interactiveOutput = await runInteractive(
-        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
         requireState(workspace, "The workspace was not created."),
         featureInput(new Set(rows.map(({ feature }) => feature)), undefined, packageManagerChoice),
       );
@@ -462,7 +487,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
 
     And("the generated documentation uses Bun commands", async () => {
       const project = requireState(generatedProject, "The project was not generated.");
-      await expectFileToContain(project, "README.md", "`bun check`");
+      await expectFileToContain(project, "README.md", "`bun run check`");
       await expectFileToContain(project, "README.md", "- bun 1.3.14");
     });
 
@@ -505,7 +530,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
       And("I select these features:", async (_context, rows: { feature: string }[]) => {
         const project = requireState(generatedProject, "The project was not named.");
         const result = await runInteractive(
-          [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+          [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
           requireState(workspace, "The workspace was not created."),
           featureInput(new Set(rows.map(({ feature }) => feature))),
         );
@@ -538,7 +563,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
       const project = requireState(generatedProject, "The project was not named.");
       await runInteractive(
-        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
         requireState(workspace, "The workspace was not created."),
         featureInput(new Set(rows.map(({ feature }) => feature))),
       );
@@ -566,7 +591,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
       const project = requireState(generatedProject, "The project was not named.");
       await runInteractive(
-        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
         requireState(workspace, "The workspace was not created."),
         featureInput(new Set(rows.map(({ feature }) => feature))),
       );
@@ -610,7 +635,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
       const project = requireState(generatedProject, "The project was not named.");
       interactiveOutput = await runInteractive(
-        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
         requireState(workspace, "The workspace was not created."),
         featureInput(new Set(rows.map(({ feature }) => feature))),
       );
@@ -661,7 +686,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
       const project = requireState(generatedProject, "The project was not named.");
       const result = await runInteractive(
-        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
         requireState(workspace, "The workspace was not created."),
         featureInput(new Set(rows.map(({ feature }) => feature))),
       );
@@ -700,7 +725,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
     And("I select these features:", async (_context, rows: { feature: string }[]) => {
       const project = requireState(generatedProject, "The project was not named.");
       interactiveOutput = await runInteractive(
-        [resolve("dist/cli.js"), "create", project.slice(project.lastIndexOf("/") + 1)],
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
         requireState(workspace, "The workspace was not created."),
         featureInput(new Set(rows.map(({ feature }) => feature)), "y"),
       );
@@ -765,7 +790,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
           const currentWorkspace = requireState(workspace, "The workspace was not created.");
           generatedProject = join(currentWorkspace, projectName);
           interactiveOutput = await runInteractive(
-            [resolve("dist/cli.js"), "create", projectName],
+            [resolve("dist/cli.js"), "create", "--name", projectName],
             currentWorkspace,
             featureInput(new Set(["oxlint", "anti-slop", "anti-slop-effect", "ultracite"]), "n"),
           );
@@ -804,7 +829,7 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
           const currentWorkspace = requireState(workspace, "The workspace was not created.");
           generatedProject = join(currentWorkspace, projectName);
           failedOutput = await runInteractive(
-            [resolve("dist/cli.js"), "create", projectName],
+            [resolve("dist/cli.js"), "create", "--name", projectName],
             currentWorkspace,
             "",
           );
@@ -1138,6 +1163,218 @@ describeFeature(feature, ({ Scenario, ScenarioOutline, AfterEachScenario }) => {
         await expectFileToEqual(project, "tsconfig.json", originalConfig);
         await expect(readFile(join(project, "package.json"), "utf8")).rejects.toThrow();
       });
+    },
+  );
+
+  Scenario(
+    "Generate a Vite React project without a React Compiler",
+    ({ Given, When, Then, And }) => {
+      Given("an empty workspace for a new project", async () => {
+        workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+      });
+
+      When("I create {string} without a preset", async (_context, projectName: string) => {
+        const currentWorkspace = requireState(workspace, "The workspace was not created.");
+        generatedProject = join(currentWorkspace, projectName);
+      });
+
+      And("I select these features:", async (_context, rows: { feature: string }[]) => {
+        const project = requireState(generatedProject, "The project was not named.");
+        const result = await runInteractive(
+          [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
+          requireState(workspace, "The workspace was not created."),
+          featureInput(new Set(rows.map(({ feature }) => feature))),
+        );
+        expect(result.code).toBe(0);
+      });
+
+      Then("the generated project uses Vite for development and production builds", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const packageJson = await readJson<{
+          dependencies: Record<string, string>;
+          devDependencies: Record<string, string>;
+          engines: { node: string };
+          scripts: Record<string, string>;
+        }>(join(project, "package.json"));
+        expect(packageJson.dependencies).toHaveProperty("react");
+        expect(packageJson.dependencies).toHaveProperty("react-dom");
+        expect(packageJson.devDependencies).toHaveProperty("vite");
+        expect(packageJson.devDependencies).toHaveProperty("@vitejs/plugin-react");
+        expect(packageJson.engines.node).toBe(">=22.12");
+        expect(packageJson.scripts).toMatchObject({ dev: "vite", build: "vite build" });
+        await expectFiles(project, ["index.html", "src/App.tsx", "src/main.tsx", "vite.config.ts"]);
+      });
+
+      And("neither React Compiler integration is configured", async () => {
+        const project = requireState(generatedProject, "The project was not generated.");
+        const packageJson = await readJson<{
+          devDependencies: Record<string, string>;
+        }>(join(project, "package.json"));
+        const viteConfig = await readFile(join(project, "vite.config.ts"), "utf8");
+        expect(packageJson.devDependencies).not.toHaveProperty("oxc-transform-react");
+        expect(packageJson.devDependencies).not.toHaveProperty("babel-plugin-react-compiler");
+        expect(viteConfig).toContain("plugins: [react()]");
+        expect(viteConfig).not.toContain("compiler: true");
+        expect(viteConfig).not.toContain("reactCompilerPreset");
+      });
+
+      And(
+        "installing dependencies and running the Vite React project checks succeeds",
+        async () => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "install"], project);
+          await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
+        },
+      );
+    },
+  );
+
+  ScenarioOutline(
+    "Generate a Vite React project with a selected React Compiler",
+    ({ Given, When, Then, And }, example) => {
+      Given("an empty workspace for a new project", async () => {
+        workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+      });
+
+      When("I create {string} without a preset", async () => {
+        const currentWorkspace = requireState(workspace, "The workspace was not created.");
+        generatedProject = join(currentWorkspace, example.project);
+      });
+
+      And("I select the {string} React Compiler option", async (_context, compiler: string) => {
+        const project = requireState(generatedProject, "The project was not named.");
+        const compilerFeature =
+          compiler === "Babel" ? "react-compiler-babel" : "react-compiler-oxc";
+        const result = await runInteractive(
+          [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
+          requireState(workspace, "The workspace was not created."),
+          featureInput(new Set(["vite-react", compilerFeature])),
+        );
+        expect(result.code, result.stderr + result.stdout).toBe(0);
+      });
+
+      Then(
+        "the generated project configures the {string} integration",
+        async (_context, compiler: string) => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          const viteConfig = await readFile(join(project, "vite.config.ts"), "utf8");
+          if (compiler === "Babel") {
+            expect(viteConfig).toContain("reactCompilerPreset()");
+            expect(viteConfig).toContain('from "@rolldown/plugin-babel"');
+            return;
+          }
+          expect(viteConfig).toContain("react({ compiler: true })");
+        },
+      );
+
+      And(
+        "the generated project declares the dependencies required for the {string} integration",
+        async (_context, compiler: string) => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          const packageJson = await readJson<{
+            devDependencies: Record<string, string>;
+          }>(join(project, "package.json"));
+          expect(packageJson.devDependencies).toHaveProperty("@vitejs/plugin-react");
+          expect(packageJson.devDependencies).toHaveProperty("vite");
+          if (compiler === "Babel") {
+            expect(packageJson.devDependencies).toHaveProperty("@babel/core");
+            expect(packageJson.devDependencies).toHaveProperty("@rolldown/plugin-babel");
+            expect(packageJson.devDependencies).toHaveProperty("babel-plugin-react-compiler");
+            return;
+          }
+          expect(packageJson.devDependencies).toHaveProperty("oxc-transform-react");
+        },
+      );
+
+      And(
+        "installing dependencies and running the Vite React project checks succeeds",
+        async () => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "install"], project);
+          await run("npm", ["exec", "--yes", "pnpm@10.11.0", "--", "check"], project);
+        },
+      );
+    },
+  );
+
+  Scenario("Reject selecting both React Compiler integrations", ({ Given, When, Then, And }) => {
+    Given("an empty workspace for a new project", async () => {
+      workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+    });
+
+    When("I create {string} without a preset", async (_context, projectName: string) => {
+      const currentWorkspace = requireState(workspace, "The workspace was not created.");
+      generatedProject = join(currentWorkspace, projectName);
+    });
+
+    And("I select these features:", async (_context, rows: { feature: string }[]) => {
+      const project = requireState(generatedProject, "The project was not named.");
+      failedOutput = await runInteractive(
+        [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
+        requireState(workspace, "The workspace was not created."),
+        featureInput(new Set(rows.map(({ feature }) => feature))),
+      );
+    });
+
+    Then(
+      "the command reports that the React Compiler integrations are mutually exclusive",
+      async () => {
+        const output = requireState(failedOutput, "The feature selection did not run.");
+        expect(output.code).not.toBe(0);
+        expect(output.stderr).toContain("React Compiler integrations are mutually exclusive");
+      },
+    );
+
+    And("the command does not generate a project", async () => {
+      const project = requireState(generatedProject, "The project was not named.");
+      await expect(readFile(join(project, "package.json"), "utf8")).rejects.toThrow();
+    });
+  });
+
+  Scenario(
+    "Run a Vite React project with Bun and the Oxc compiler",
+    ({ Given, When, Then, And }) => {
+      Given("an empty workspace for a new project", async () => {
+        workspace = await mkdtemp(join(tmpdir(), "create-agent-stack-acceptance-"));
+      });
+
+      When("I create {string} without a preset", async (_context, projectName: string) => {
+        const currentWorkspace = requireState(workspace, "The workspace was not created.");
+        generatedProject = join(currentWorkspace, projectName);
+      });
+
+      And("I choose Bun with Vite + React, Vitest, and the Oxc React Compiler", async () => {
+        const project = requireState(generatedProject, "The project was not named.");
+        const result = await runInteractive(
+          [resolve("dist/cli.js"), "create", "--name", project.slice(project.lastIndexOf("/") + 1)],
+          requireState(workspace, "The workspace was not created."),
+          featureInput(new Set(["vite-react", "vitest", "react-compiler-oxc"]), undefined, "2"),
+        );
+        expect(result.code).toBe(0);
+      });
+
+      Then(
+        "the generated project's check script runs the Vite build and Vitest through Bun's package-script runner",
+        async () => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          const packageJson = await readJson<{ scripts: Record<string, string> }>(
+            join(project, "package.json"),
+          );
+          expect(packageJson.scripts.build).toBe("vite build");
+          expect(packageJson.scripts.test).toBe("vitest run");
+          expect(packageJson.scripts.check).toContain("bun run build");
+          expect(packageJson.scripts.check).toContain("bun run test");
+        },
+      );
+
+      And(
+        "installing dependencies and running the Bun Vite React project checks succeeds",
+        async () => {
+          const project = requireState(generatedProject, "The project was not generated.");
+          await run("bun", ["install"], project);
+          await run("bun", ["check"], project);
+        },
+      );
     },
   );
 });

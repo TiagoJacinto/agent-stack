@@ -26,7 +26,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun run build && vitest run",
     "test:unit": "vitest run tests/generator.test.ts",
-    "test:acceptance": "bun run build && vitest run tests/create-minimum-project.acceptance.test.ts",
+    "test:acceptance": "bun run build && vitest run tests/create-minimum-project.acceptance.test.ts tests/non-interactive-cli.acceptance.test.ts",
     "check": "bun run format:check && bun run lint && bun run typecheck && bun run test"
   },
   "engines": {
